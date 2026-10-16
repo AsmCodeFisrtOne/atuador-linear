@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.06 · 2026-10-16
+  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.07 · 2026-10-16
   Faz o papel do display TFT (480×320) até o firmware do Device ficar pronto:
    1 Boas-vindas → 2 Pix (QR real, pedido no Firebase) → 3 Aprovado → 4 Servindo
    → 5 Bom apetite → (6 Reabastecer quando acabam as porções)
@@ -14,6 +14,8 @@
   Rev.05 – Dose = curva inteira (1 ciclo = 1 copo); volumes só contam as doses disponíveis.
   Rev.06 – A curva cobre o RESERVATÓRIO INTEIRO: cada copo avança só o seu trecho da
            curva a partir da posição atual do êmbolo; porções = (restante ÷ copo).
+  Rev.07 – Sem "pulo" de preço ao recarregar: usa a última configuração recebida (cache)
+           e só desenha após ler o Firebase; não usa mais o preço local do app.
 -->
 <html lang="pt-BR"><head>
 <meta charset="utf-8">
@@ -35,7 +37,7 @@ body{display:flex;align-items:center;justify-content:center}
 </style></head><body>
 <div id="disp"><div id="scr"></div></div>
 <button id="fs">⛶ tela cheia</button>
-<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.06</div>
+<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.07</div>
 <script>
 'use strict';
 // Copyright (c) 2009 Kazuhiko Arase
@@ -138,10 +140,10 @@ function DF(){ return CFG&&CFG.copo_ml>0&&CFG.reservatorio_ml>0 ? CFG.copo_ml/CF
 function ls(k,d){ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):d; }catch(e){ return d; } }
 function lsSet(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
 // preço e tempo de descida vêm do app de configuração quando aberto no mesmo aparelho
-let CFG=null; // parâmetros recebidos do app de configuração
-async function loadCfg(){ try{ const r=await fetch(`${FB_DB}/maquinas/${MAQ_ID}/config.json`,{cache:'no-store'}); const d=await r.json(); if(d&&d.tabela&&d.tabela.length>1) CFG=d; }catch(e){}
+let CFG=ls('maq_cfg',null); // parâmetros recebidos do app (última versão em cache)
+async function loadCfg(){ try{ const r=await fetch(`${FB_DB}/maquinas/${MAQ_ID}/config.json`,{cache:'no-store'}); const d=await r.json(); if(d&&d.tabela&&d.tabela.length>1){ CFG=d; lsSet('maq_cfg',d); } }catch(e){}
   return CFG; }
-function price(){ return CFG&&CFG.preco!=null ? +CFG.preco : +ls('atl_price',12); }
+function price(){ return CFG&&CFG.preco!=null ? +CFG.preco : 12; }
 function serveTime(){ const pr=ls('atl_profiles',null), c=ls('atl_cur','A'); const t=pr&&pr[c]&&pr[c].ttot; return (t>0?t:3)*1000; }
 let usado=+ls('maq_usado',0); // fração do reservatório já servida (0 = cheio, 1 = vazio) — equivale à posição do êmbolo
 function porcoesRest(){ return Math.max(0,Math.floor((1-usado)/DF()+1e-6)); }
@@ -224,7 +226,7 @@ function render(html){ $scr.innerHTML=html; }
 const $scr=document.getElementById('scr');
 function stopAll(){ clearInterval(S.timer); S.timer=null; clearInterval(S.poll); S.poll=null; if(S.es){ try{S.es.close();}catch(e){} S.es=null; } }
 function go(t,...a){ S.tela=t; render(T[t](...a)); }
-function inicio(){ stopAll(); loadCfg().then(()=>{ if(S.tela==='boas') go('boas'); }); if(porcoesRest()<=0) go("reab"); else go("boas"); }
+function inicio(){ stopAll(); loadCfg().then(()=>{ if(S.tela==='boas'||S.tela==='reab') go(porcoesRest()<=0?'reab':'boas'); }); if(porcoesRest()<=0) go("reab"); else go("boas"); }
 async function fbPatch(id,o){ try{ await fetch(`${FB_DB}/vendas/${id}.json`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)}); }catch(e){} }
 function newId(){ const a='ABCDEFGHJKMNPQRSTUVWXYZ23456789', r=new Uint8Array(6); crypto.getRandomValues(r); return [...r].map(x=>a[x%a.length]).join(''); }
 function makeQR(text){ const q=qrcode(0,'M'); q.addData(text); q.make(); const n=q.getModuleCount(); let d='';
@@ -287,5 +289,6 @@ function fit(){ const W=innerWidth-24, H=innerHeight-60; let w=Math.min(W,H*1.5)
   $scr.style.width=w+'px'; $scr.style.height=(w/1.5)+'px'; }
 addEventListener('resize',fit); fit();
 document.getElementById('fs').onclick=()=>{ const el=document.documentElement; (el.requestFullscreen||el.webkitRequestFullscreen||(()=>{})).call(el); };
-inicio();
+// 1ª abertura: espera a configuração do Firebase (máx. 2,5 s) antes de desenhar, para não mostrar valores antigos
+if(CFG) inicio(); else { render(screen('')); Promise.race([loadCfg(),new Promise(r=>setTimeout(r,2500))]).then(inicio); }
 </script></body></html>
