@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   ATUADOR LINEAR · App de controle BLE (motor de passo NEMA + TB6600 + Device)
-  Arquivo: index.html  ·  App Rev.32  ·  2026-10-16
+  Arquivo: index.html  ·  App Rev.33  ·  2026-10-16
   ─────────────────────────────────────────────────────────────────────────────
   CHANGELOG
    Rev.01 – Primeira versão: telas Operação / Perfil / Conexão, curva PCHIP (IPP3)
@@ -74,6 +74,9 @@
             última velocidade da tabela. "Linear" recalcula o tempo pelo Teach In.
    Rev.32 – Modo demonstração "casado" com o simulador do display (maquina.html):
             os dois compartilham o nível do reservatório em maquinas/MAQ01/estado.
+   Rev.33 – Limites do hardware real (Módulo ESP32-S2 + TB6600HG): micropasso 1, 1/2,
+            1/4, 1/8, 1/16 (sem 1/32); velocidade máx. = min(180 RPM, limite do LEDC
+            4880 Hz) → 180 RPM em 1/8, 91 RPM em 1/16. Padrões ajustados.
   ─────────────────────────────────────────────────────────────────────────────
   PROTOCOLO BLE (para o firmware do Device)
    Serviço Nordic UART (NUS)  6e400001-b5a3-f393-e0a9-e50e24dcca9e
@@ -367,7 +370,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
     <div class="row">
       <div class="field"><span class="lbl">Vel. máx. manual</span><div class="unit"><input class="f" id="cVman" type="number" step="5" min="10" inputmode="decimal"><i>RPM</i></div></div>
       <div class="field"><span class="lbl">Micropasso TB6600</span>
-        <select class="f" id="cMicro"><option value="1">1 (200 p/v)</option><option value="2">1/2 (400)</option><option value="4">1/4 (800)</option><option value="8">1/8 (1600)</option><option value="16">1/16 (3200)</option><option value="32">1/32 (6400)</option></select></div>
+        <select class="f" id="cMicro"><option value="1">1 (200 p/v)</option><option value="2">1/2 (400)</option><option value="4">1/4 (800)</option><option value="8">1/8 (1600)</option><option value="16">1/16 (3200)</option></select></div>
     </div>
     <div class="row">
       <div class="field"><span class="lbl">Aceleração máx.</span><div class="unit"><input class="f" id="cAmax" type="number" step="50" min="50" inputmode="decimal"><i>RPM/s</i></div></div>
@@ -492,7 +495,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 
 <script>
 'use strict';
-const APP_REV = 'Rev.32';
+const APP_REV = 'Rev.33';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = 20;      // bytes por escrita BLE
@@ -513,8 +516,14 @@ function toast(m){ const t=$('toast'); t.textContent=m; t.classList.add('show');
 
 /* ═════════════ PERFIS ═════════════ */
 function linearPts(T,r,v){ const p=[{t:0,v:0},{t:r,v}]; const n=4; for(let i=1;i<=n;i++) p.push({t:+(r+(T-r)*i/n).toFixed(3),v}); return p; }
-function defProfile(){ return { ttot:3, ramp:0.4, vsub:200, comp:40, vman:300, micro:8, amax:1500, vscale:300, pts:linearPts(3,0.4,150) }; }
+function defProfile(){ return { ttot:3, ramp:0.4, vsub:150, comp:40, vman:150, micro:8, amax:1500, vscale:200, pts:linearPts(3,0.4,150) }; }
+/* limite do hardware: LEDC 12 bits do Módulo (ESP32-S2) gera até ~4880 Hz de STEP; teto operacional 180 RPM */
+const VMAX_ABS=180, STEP_HZ_MAX=4880;
+function vmax(p=P()){ return Math.min(VMAX_ABS, Math.floor(STEP_HZ_MAX*60/(200*p.micro))); }
+function enforceLimits(p){ if(![1,2,4,8,16].includes(+p.micro)) p.micro=8; const m=vmax(p);
+  p.vsub=Math.min(p.vsub,m); p.vman=Math.min(p.vman,m); p.pts.forEach(q=>q.v=Math.min(q.v,m)); if(p.vscale<50) p.vscale=50; }
 let profiles = store.get('atl_profiles', null) || { A:defProfile(), B:defProfile(), C:defProfile() };
+Object.values(profiles).forEach(enforceLimits);
 let cur = store.get('atl_cur','A'); if(!profiles[cur]) cur=Object.keys(profiles)[0];
 let sentSig = ''; // não persiste: o Device pode ter reiniciado → reenvia sempre ao abrir/conectar
 const P = () => profiles[cur];
@@ -573,6 +582,7 @@ function drawChart(){
   for(let t=0;t<=T+1e-6;t+=tStep) s+=`<line y1="${CH.T}" y2="${CH.H-CH.B}" x1="${cx(t)}" x2="${cx(t)}" stroke="#2e3a47" stroke-width=".6"/><text x="${cx(t)}" y="${CH.H-CH.B+13}" fill="#8b98a5" font-size="9" text-anchor="middle">${fmt(t,t%1?(tStep<0.5?2:1):0)}</text>`;
   s+=`<text x="${(CH.L+CH.W-CH.R)/2}" y="${CH.H-3}" fill="#8b98a5" font-size="9.5" text-anchor="middle">tempo (s)</text>`;
   s+=`<text x="10" y="${(CH.T+CH.H-CH.B)/2}" fill="#8b98a5" font-size="9.5" text-anchor="middle" transform="rotate(-90 10 ${(CH.T+CH.H-CH.B)/2})">velocidade (RPM)</text>`;
+  { const vm=vmax(p); if(vm<p.vscale) s+=`<line x1="${CH.L}" x2="${CH.W-CH.R}" y1="${cy(vm)}" y2="${cy(vm)}" stroke="#e5484d" stroke-dasharray="5 4" opacity=".8"/><text x="${CH.W-CH.R-2}" y="${cy(vm)-3}" fill="#e5484d" font-size="9" text-anchor="end">máx. ${vm} RPM</text>`; }
   // curva
   const N=Math.max(60,Math.round(CH.W/2)); let path='', area=`M${cx(0)} ${cy(0)}`, red='', anyRed=false;
   let pv=f(0), pt=0;
@@ -603,7 +613,7 @@ function updPtEdit(){
 function setPoint(i,t,v){
   const p=P(), pts=p.pts, last=pts.length-1;
   if(i===0) return;
-  pts[i].v=+clamp(v,0,p.vscale).toFixed(1);
+  pts[i].v=+clamp(v,0,Math.min(p.vscale,vmax(p))).toFixed(1);
   if(i>1 && i<last){ const lo=pts[i-1].t+0.02, hi=pts[i+1].t-0.02; pts[i].t=+clamp(t,lo,hi).toFixed(3); }
 }
 // interação (arrastar · toque duplo adiciona · toque longo remove)
@@ -656,12 +666,14 @@ for(const id in FIELDS) $(id).addEventListener('change',()=>{
   if(isNaN(v)){ loadFields(); return; }
   if(k==='ttot'){ v=clamp(v,Math.max(0.5,p.ramp+0.2),120); rescaleTime(p.ttot,p.ramp,v,p.ramp); }
   if(k==='ramp'){ v=clamp(v,0.05,p.ttot-0.2); rescaleTime(p.ttot,p.ramp,p.ttot,v); }
-  if(k==='vsub') v=clamp(v,1,3000);
+  if(k==='vsub') v=clamp(v,1,vmax(p));
   if(k==='comp') v=Math.round(clamp(v,-100000,100000));
-  if(k==='vman') v=clamp(v,10,3000);
+  if(k==='vman') v=clamp(v,10,vmax(p));
   if(k==='amax') v=clamp(v,10,100000);
-  if(k==='vscale'){ v=clamp(v,50,5000); p.pts.forEach(q=>q.v=Math.min(q.v,v)); }
-  p[k]=v; loadFields(); save(); drawChart(); updSummary(); updTimeLbl();
+  if(k==='vscale'){ v=clamp(v,50,400); p.pts.forEach(q=>q.v=Math.min(q.v,v)); }
+  p[k]=v; const before=JSON.stringify([p.vsub,p.vman,p.pts]); enforceLimits(p);
+  if(k==='micro' && before!==JSON.stringify([p.vsub,p.vman,p.pts])) toast(`Velocidades limitadas a ${vmax(p)} RPM em 1/${p.micro}`);
+  loadFields(); save(); drawChart(); updSummary(); updTimeLbl();
 });
 function updSummary(){
   const p=P(), st=descSteps(p);

@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.11 · 2026-10-16
+  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.12 · 2026-10-16
   Faz o papel do display TFT (480×320) até o firmware do Device ficar pronto:
    1 Boas-vindas → 2 Pix (QR real, pedido no Firebase) → 3 Aprovado → 4 Servindo
    → 5 Bom apetite → (6 Reabastecer quando acabam as porções)
@@ -23,6 +23,8 @@
   Rev.10 – "Reservatório cheio" no app (campo reabastecido) zera o reservatório aqui.
   Rev.11 – Nível do reservatório compartilhado com o modo demonstração do app
            (maquinas/MAQ01/estado): servir/reabastecer em um reflete no outro.
+  Rev.12 – Cabeçalho: bateria removida; GPS (ícone de satélite verde/vermelho, nº de
+           satélites, barras de sinal e coordenadas) — valores simulados.
 -->
 <html lang="pt-BR"><head>
 <meta charset="utf-8">
@@ -46,7 +48,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 </style></head><body>
 <div id="disp"><div id="scr"></div></div>
 <button id="fs">⛶ tela cheia</button>
-<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.11</div>
+<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.12</div>
 <script>
 'use strict';
 // Copyright (c) 2009 Kazuhiko Arase
@@ -71,13 +73,24 @@ function blobs(){return `
  <circle cx="20" cy="40" r="46" fill="#FFF0C2" opacity=".7"/>
  ${[[230,40],[300,290],[450,150],[30,300],[200,300]].map(([x,y],i)=>`<circle cx="${x}" cy="${y}" r="${2.5+(i%2)}" fill="${i%2?C.pink:C.pist}" opacity=".5"/>`).join('')}`;}
 
-function header(right=''){return `
+function header(right=''){ const g=(typeof GPS!=='undefined')?GPS:{fix:true,sats:9,lat:-23.55052,lon:-46.63331};
+ const col=g.fix?'#3E9B4F':'#D9363E', bars=g.fix?Math.min(5,Math.max(1,Math.round(g.sats/2))):0;
+ const f=v=>(v<0?'−':'')+Math.abs(v).toFixed(5).replace('.',',');
+ return `
  <rect x="14" y="12" width="74" height="28" rx="8" fill="none" stroke="${C.choc2}" stroke-opacity=".35" stroke-dasharray="4 3"/>
  <text x="51" y="31" font-size="11" fill="${C.choc2}" fill-opacity=".6" text-anchor="middle" letter-spacing="1">SEU LOGO</text>
- <!-- bateria -->
- <g transform="translate(428 17)"><rect width="30" height="16" rx="4" fill="none" stroke="${C.choc}" stroke-width="2"/><rect x="31" y="5" width="3" height="6" rx="1" fill="${C.choc}"/>
- <rect x="3" y="3" width="18" height="10" rx="2" fill="${C.pist2}"/></g>
- <g transform="translate(404 15)" fill="none" stroke="${C.choc}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity=".75"><path d="M3 5l10 9-5 4.5V1l5 4.5-10 9"/></g>
+ <!-- Bluetooth -->
+ <g transform="translate(236 15)" fill="none" stroke="${C.choc}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity=".55"><path d="M3 5l10 9-5 4.5V1l5 4.5-10 9"/></g>
+ <!-- GPS: coordenadas -->
+ <g transform="translate(258 13)"><path d="M6 0a6 6 0 0 1 6 6c0 4.5-6 11-6 11S0 10.5 0 6a6 6 0 0 1 6-6z" fill="${col}"/><circle cx="6" cy="6" r="2.3" fill="#fff"/></g>
+ <text x="276" y="22" font-size="10.5" fill="${C.choc}">${g.fix?f(g.lat):'sem posição'}</text>
+ <text x="276" y="35" font-size="10.5" fill="${C.choc}">${g.fix?f(g.lon):'buscando GPS…'}</text>
+ <!-- GPS: satélite + quantidade + barras (como no Hub) -->
+ <g transform="translate(372 13) rotate(-35 11 11)" fill="${col}">
+   <rect x="8" y="7" width="7" height="9" rx="1.5"/><rect x="-1" y="9" width="8" height="5" rx="1" opacity=".85"/><rect x="16" y="9" width="8" height="5" rx="1" opacity=".85"/>
+   <path d="M11.5 16v3" stroke="${col}" stroke-width="1.6"/><path d="M8.5 21a3.5 3.5 0 0 1 6 0" fill="none" stroke="${col}" stroke-width="1.6"/></g>
+ <text x="401" y="34" font-size="17" fill="${col}" font-weight="700">${g.sats}</text>
+ <g transform="translate(424 14)">${[0,1,2,3,4].map(i=>{ const h=6+i*4, x=i*8; return `<rect x="${x}" y="${22-h}" width="6" height="${h}" rx="1" fill="${i<bars?col:'none'}" stroke="${i<bars?col:'#C9B8A8'}" stroke-width="1.2"/>`; }).join('')}</g>
  ${right}`;}
 
 // bico do dispenser
