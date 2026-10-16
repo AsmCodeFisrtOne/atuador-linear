@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   ATUADOR LINEAR · App de controle BLE (motor de passo NEMA + TB6600 + ESP32-S3)
-  Arquivo: index.html  ·  App Rev.20  ·  2026-10-16
+  Arquivo: index.html  ·  App Rev.21  ·  2026-10-16
   ─────────────────────────────────────────────────────────────────────────────
   CHANGELOG
    Rev.01 – Primeira versão: telas Operação / Perfil / Conexão, curva PCHIP (IPP3)
@@ -50,6 +50,7 @@
    Rev.19 – Preço do copo também vai ao ESP32 (CFG <preco_centavos>); mudar preço,
             reservatório ou copo marca o perfil como "a enviar".
    Rev.20 – Removido "faturamento por carga" da aba Máquina.
+   Rev.21 – Campos da aba Máquina desabilitados sem conexão (ou sem modo demonstração).
   ─────────────────────────────────────────────────────────────────────────────
   PROTOCOLO BLE (para o firmware ESP32-S3)
    Serviço Nordic UART (NUS)  6e400001-b5a3-f393-e0a9-e50e24dcca9e
@@ -172,6 +173,7 @@ nav button{transition:transform .07s}nav button.pressed{transform:scale(.9)}
 .field small{font-size:10px;color:var(--mut)}
 .f{background:var(--card2);border:1px solid var(--line);border-radius:10px;color:var(--tx);font-weight:600;font-size:16px;font-family:inherit;padding:9px 10px;width:100%;-webkit-appearance:none;appearance:none}
 .f:focus{outline:none;border-color:var(--acc)}
+.f:disabled{opacity:.45}
 .unit{position:relative}
 .unit .f{padding-right:52px}
 .unit i{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-style:normal;font-size:12px;color:var(--mut);pointer-events:none}
@@ -371,6 +373,7 @@ nav svg{width:24px;height:24px}
 <!-- ═══════════════ CONEXÃO ═══════════════ -->
 <section id="sec-mq">
   <h2>Máquina</h2>
+  <div id="mOff" class="warnbox" style="display:none">Conecte ao Device ou ative o <b>Modo demonstração</b> (aba Conexão) para editar.</div>
   <div class="card" style="display:flex;flex-direction:column;gap:12px">
     <div class="row">
       <div class="field"><span class="lbl">Volume do reservatório</span><div class="unit"><input class="f" id="mRes" type="number" step="50" min="50" inputmode="decimal" style="font-size:20px"><i>ml</i></div><small>gelato útil, cheio</small></div>
@@ -438,7 +441,7 @@ nav svg{width:24px;height:24px}
 
 <script>
 'use strict';
-const APP_REV = 'Rev.20';
+const APP_REV = 'Rev.21';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = 20;      // bytes por escrita BLE
@@ -731,6 +734,7 @@ function updHeader(){
   if(!connected&&!demo) $('cxMsg').textContent='Toque em procurar e escolha o atuador na lista.';
   ['bAuto','bTop','bBot'].forEach(id=>$(id).disabled=!online()); document.querySelectorAll('.jog').forEach(b=>b.disabled=!online()); $('bUpAuto').disabled=!online()||lastSt.st===1||lastSt.st===2;
   $('bSend').disabled=!online();
+  ['mRes','mCup','cPrice'].forEach(id=>$(id).disabled=!online()); $('mOff').style.display=online()?'none':'block';
   renderDevs(); updateDirty();
 }
 
