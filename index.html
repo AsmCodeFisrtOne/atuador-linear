@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   ATUADOR LINEAR · App de controle BLE (motor de passo NEMA + TB6600 + ESP32-S3)
-  Arquivo: index.html  ·  App Rev.15  ·  2026-10-16
+  Arquivo: index.html  ·  App Rev.16  ·  2026-10-16
   ─────────────────────────────────────────────────────────────────────────────
   CHANGELOG
    Rev.01 – Primeira versão: telas Operação / Perfil / Conexão, curva PCHIP (IPP3)
@@ -38,6 +38,9 @@
             o display). App volta a ser só configuração. Preço permanece como parâmetro.
    Rev.15 – Parâmetros (preço, tempo e tabela da curva) espelhados no Firebase em
             maquinas/MAQ01/config para o simulador do display usar (só simulação).
+   Rev.16 – Nova aba MÁQUINA: volume do reservatório, volume do copo e preço;
+            calcula porções, passos/ml e passos/copo (com Teach In) e ajusta o
+            perfil para entregar exatamente 1 copo por ciclo.
   ─────────────────────────────────────────────────────────────────────────────
   PROTOCOLO BLE (para o firmware ESP32-S3)
    Serviço Nordic UART (NUS)  6e400001-b5a3-f393-e0a9-e50e24dcca9e
@@ -103,7 +106,8 @@ body{overflow:hidden}
 .wide .jog{height:120px}
 .wide #bAuto{height:80px!important}
 .wide #bUpAuto{height:64px!important}
-.wide #sec-cx{flex-direction:column;align-items:stretch;max-width:620px}
+.wide #sec-cx,.wide #sec-mq{flex-direction:column;align-items:stretch;max-width:620px}
+.big{font-size:26px;font-weight:700}
 .wide #chart{height:300px}
 header{max-width:1100px;width:100%;margin:0 auto}
 .wide nav{justify-content:center}
@@ -312,10 +316,6 @@ nav svg{width:24px;height:24px}
       <div class="field"><span class="lbl">Aceleração máx.</span><div class="unit"><input class="f" id="cAmax" type="number" step="50" min="50" inputmode="decimal"><i>RPM/s</i></div></div>
       <div class="field"><span class="lbl">Escala do gráfico</span><div class="unit"><input class="f" id="cVscale" type="number" step="50" min="50" inputmode="decimal"><i>RPM</i></div></div>
     </div>
-    <div class="row">
-      <div class="field"><span class="lbl">Preço da porção</span><div class="unit"><input class="f" id="cPrice" type="number" step="0.5" min="0" inputmode="decimal"><i>R$</i></div><small>exibido no display da máquina</small></div>
-      <div class="field"></div>
-    </div>
     <div style="font-size:12px;color:var(--mut);padding:2px" id="summary"></div>
   </div>
   <div class="row">
@@ -355,6 +355,39 @@ nav svg{width:24px;height:24px}
 </section>
 
 <!-- ═══════════════ CONEXÃO ═══════════════ -->
+<section id="sec-mq">
+  <h2>Máquina</h2>
+  <div class="card" style="display:flex;flex-direction:column;gap:12px">
+    <div class="row">
+      <div class="field"><span class="lbl">Volume do reservatório</span><div class="unit"><input class="f" id="mRes" type="number" step="50" min="50" inputmode="decimal" style="font-size:20px"><i>ml</i></div><small>gelato útil, cheio</small></div>
+      <div class="field"><span class="lbl">Volume do copo</span><div class="unit"><input class="f" id="mCup" type="number" step="5" min="5" inputmode="decimal" style="font-size:20px"><i>ml</i></div><small>1 porção</small></div>
+    </div>
+    <div class="row">
+      <div class="field"><span class="lbl">Preço da porção</span><div class="unit"><input class="f" id="cPrice" type="number" step="0.5" min="0" inputmode="decimal" style="font-size:20px"><i>R$</i></div><small>exibido no display</small></div>
+      <div class="field"></div>
+    </div>
+  </div>
+
+  <div class="card" style="display:flex;justify-content:space-around;gap:8px;text-align:center">
+    <div class="kv" style="align-items:center"><b class="big" id="mPor" style="color:var(--acc);height:auto;line-height:1.1">—</b><span>porções por reservatório</span></div>
+    <div class="kv" style="align-items:center"><b class="big" id="mFat" style="color:var(--ok);height:auto;line-height:1.1">—</b><span>faturamento por carga</span></div>
+  </div>
+
+  <div class="card" style="display:flex;flex-direction:column;gap:10px">
+    <div style="font-size:16px;font-weight:700">Dosagem pelo êmbolo</div>
+    <div id="mNoTeach" class="warnbox" style="display:none">Faça o <b>Teach In</b> (aba Perfil) para a máquina saber quantos passos o êmbolo anda no reservatório inteiro.</div>
+    <div id="mDose" style="display:flex;justify-content:space-between;gap:6px">
+      <div class="kv"><b id="mSpm">—</b><span>passos / ml</span></div>
+      <div class="kv"><b id="mSpc">—</b><span>passos / copo</span></div>
+      <div class="kv"><b id="mRpc">—</b><span>voltas / copo</span></div>
+      <div class="kv"><b id="mMpv">—</b><span>ml / volta</span></div>
+    </div>
+    <div id="mCheck" style="font-size:13px;color:var(--mut)"></div>
+    <button class="btn g-green" id="bDose" style="height:52px;font-size:16px">✓ Ajustar perfil para 1 copo</button>
+    <div class="hint" style="text-align:left">Mantém o tempo total e a forma da curva do perfil ativo e ajusta as velocidades para que cada ciclo entregue exatamente o volume do copo.</div>
+  </div>
+</section>
+
 <section id="sec-cx">
   <h2>Conexão Bluetooth</h2>
   <div id="noBle2" class="warnbox" style="display:none;position:relative;padding-right:34px"><span id="noBleTxt"></span><button id="noBleX" style="position:absolute;top:4px;right:6px;background:none;border:none;color:inherit;font-size:20px;line-height:1;padding:4px" aria-label="Fechar">×</button></div>
@@ -385,6 +418,7 @@ nav svg{width:24px;height:24px}
 <nav>
   <button class="on" data-sec="op"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M10 8l6 4-6 4z" fill="currentColor"/></svg>Operação</button>
   <button data-sec="pf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 20h18M4 16c4-1 5-9 8-9s4 6 8 7"/></svg>Perfil</button>
+  <button data-sec="mq"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 9h12l-1.5 12h-9z"/><path d="M7 9a5 5 0 0 1 10 0"/></svg>Máquina</button>
   <button data-sec="cx"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7l10 10-5 5V2l5 5L7 17"/></svg>Conexão</button>
 </nav>
 <div id="toast"></div>
@@ -392,7 +426,7 @@ nav svg{width:24px;height:24px}
 
 <script>
 'use strict';
-const APP_REV = 'Rev.15';
+const APP_REV = 'Rev.16';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = 20;      // bytes por escrita BLE
@@ -422,10 +456,11 @@ function save(){ store.set('atl_profiles',profiles); store.set('atl_cur',cur); u
 /* espelho dos parâmetros para o SIMULADOR do display (maquina.html) — no produto final vão por BLE ao ESP32 */
 const FB_DB='https://ensaios-calibracoes-default-rtdb.firebaseio.com', MAQ_ID='MAQ01';
 let pubT=null;
+function mqGet(){ return store.get('atl_mq',{res:2000,cup:150}); }
 function publishSim(){ clearTimeout(pubT); pubT=setTimeout(async()=>{
   try{ const p=P(), v=table(p).map(x=>Math.round(x*10));
     await fetch(`${FB_DB}/maquinas/${MAQ_ID}/config.json`,{method:'PUT',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({preco:+store.get('atl_price',12),ttot:p.ttot,dt:DT_MS,tabela:v,perfil:cur,atualizado:{'.sv':'timestamp'}})});
+      body:JSON.stringify({preco:+store.get('atl_price',12),ttot:p.ttot,dt:DT_MS,tabela:v,perfil:cur,reservatorio_ml:mqGet().res,copo_ml:mqGet().cup,porcoes:Math.floor(mqGet().res/mqGet().cup),atualizado:{'.sv':'timestamp'}})});
   }catch(e){} },800); }
 
 /* PCHIP (Fritsch–Carlson) — mesmo modelo do IPP3 */
@@ -939,17 +974,43 @@ function simTick(){
   handleLine(`S,${sim.st},${Math.round(sim.rpm*10)},${Math.round(sim.pos)},${Math.round(sim.st===1?sim.t*1000:0)},${fc}`);
 }
 
-/* ═════════════ PREÇO (parâmetro da máquina; lido pelo display) ═════════════ */
+/* ═════════════ MÁQUINA: reservatório, copo, preço ═════════════ */
 let price=store.get('atl_price',12);
-$('cPrice').value=price;
-$('cPrice').addEventListener('change',()=>{ const v=parseFloat($('cPrice').value); if(!isNaN(v)&&v>=0){ price=+v.toFixed(2); store.set('atl_price',price); publishSim(); } $('cPrice').value=price; });
+let mq=store.get('atl_mq',{res:2000,cup:150});
+function porcoes(){ return Math.floor(mq.res/mq.cup); }
+function updMq(){
+  if(document.activeElement!==$('mRes')) $('mRes').value=mq.res;
+  if(document.activeElement!==$('mCup')) $('mCup').value=mq.cup;
+  if(document.activeElement!==$('cPrice')) $('cPrice').value=price;
+  const n=porcoes(); $('mPor').textContent=n; $('mFat').textContent='R$ '+(n*price).toFixed(2).replace('.',',');
+  const ts=teachSteps();
+  $('mNoTeach').style.display=ts?'none':'block'; $('mDose').style.opacity=ts?1:.35; $('bDose').disabled=!ts;
+  if(!ts){ ['mSpm','mSpc','mRpc','mMpv'].forEach(i=>$(i).textContent='—'); $('mCheck').textContent=''; return; }
+  const spm=ts/mq.res, spc=spm*mq.cup, sp=spr();
+  $('mSpm').textContent=fmt(spm,1); $('mSpc').textContent=fmtInt(spc); $('mRpc').textContent=fmt(spc/sp); $('mMpv').textContent=fmt(sp/spm,1);
+  const ml=descSteps(P())/spm, d=(ml-mq.cup)/mq.cup*100;
+  $('mCheck').innerHTML = Math.abs(d)<1 ? `<span style="color:var(--ok)">✓ O perfil ${cur} entrega ${fmt(ml,0)} ml por ciclo (1 copo).</span>`
+    : `O perfil ${cur} entrega <b style="color:var(--tx)">${fmt(ml,0)} ml</b> por ciclo — <span style="color:var(--warn)">${d>0?'+':''}${fmt(d,0)}%</span> do copo (${fmt(mq.cup,0)} ml).`;
+}
+function setMq(k,v,min){ if(isNaN(v)||v<min) { updMq(); return; } mq[k]=+v; if(mq.cup>mq.res) mq.cup=mq.res; store.set('atl_mq',mq); updMq(); publishSim(); }
+$('mRes').addEventListener('change',()=>setMq('res',parseFloat($('mRes').value),50));
+$('mCup').addEventListener('change',()=>setMq('cup',parseFloat($('mCup').value),5));
+$('cPrice').addEventListener('change',()=>{ const v=parseFloat($('cPrice').value); if(!isNaN(v)&&v>=0){ price=+v.toFixed(2); store.set('atl_price',price); publishSim(); } updMq(); });
+$('bDose').onclick=()=>{
+  const ts=teachSteps(); if(!ts){ toast('Faça o Teach In primeiro'); return; }
+  const p=P(), target=ts/mq.res*mq.cup, k=target/Math.max(1,descSteps(p));
+  p.pts.forEach(q=>q.v=+(q.v*k).toFixed(1));
+  const vmax=Math.max(...p.pts.map(q=>q.v)); if(vmax>p.vscale) p.vscale=Math.ceil(vmax*1.15/50)*50;
+  save(); refreshAll(); updMq(); toast(`Perfil ${cur}: 1 copo = ${fmt(mq.cup,0)} ml em ${fmt(p.ttot)} s`);
+};
 
 /* ═════════════ NAVEGAÇÃO ═════════════ */
 let curSec='op';
 function nav(s){ curSec=s; document.querySelectorAll('section').forEach(e=>e.classList.toggle('on',e.id==='sec-'+s));
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.sec===s));
   if(s==='pf') requestAnimationFrame(drawChart);
-  if(s==='op') refreshMini(); }
+  if(s==='op') refreshMini();
+  if(s==='mq') updMq(); }
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>nav(b.dataset.sec));
 /* ═════════════ EFEITO DE BOTÃO PRESSIONADO ═════════════ */
 document.addEventListener('pointerdown',e=>{ const b=e.target.closest('button'); if(!b||b.disabled) return; b.classList.add('pressed');
@@ -972,7 +1033,7 @@ if(window.visualViewport) visualViewport.addEventListener('resize',fit);
 
 function refreshAll(){ try{ refreshMini(); }catch(e){} updTeach(); renderPresets(); loadFields(); drawChart(); updSummary(); updTimeLbl(); updateDirty(); if(!online()||lastSt.st===0) { stroke=descSteps(); } }
 $('verLbl').textContent='Android: Chrome/Edge · iPhone: app Bluefy · App '+APP_REV;
-fit(); refreshAll(); updHeader(); onStatus(0,0,0,0,0);
+fit(); refreshAll(); updMq(); updHeader(); onStatus(0,0,0,0,0);
 </script>
 </body>
 </html>

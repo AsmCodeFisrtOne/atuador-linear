@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.02 · 2026-10-16
+  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.03 · 2026-10-16
   Faz o papel do display TFT (480×320) até o firmware do ESP32-S3 ficar pronto:
    1 Boas-vindas → 2 Pix (QR real, pedido no Firebase) → 3 Aprovado → 4 Servindo
    → 5 Bom apetite → (6 Reabastecer quando acabam as porções)
@@ -9,6 +9,7 @@
   Rev.02 – Usa os parâmetros enviados pelo app (Firebase maquinas/MAQ01/config):
            preço, tempo total e a curva (o copo enche conforme o volume da curva).
            Tela Aprovado fica 3 s.
+  Rev.03 – Porções por reservatório vêm do app (volume do reservatório ÷ volume do copo).
 -->
 <html lang="pt-BR"><head>
 <meta charset="utf-8">
@@ -30,7 +31,7 @@ body{display:flex;align-items:center;justify-content:center}
 </style></head><body>
 <div id="disp"><div id="scr"></div></div>
 <button id="fs">⛶ tela cheia</button>
-<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.02</div>
+<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.03</div>
 <script>
 'use strict';
 // Copyright (c) 2009 Kazuhiko Arase
@@ -128,21 +129,24 @@ function screen(inner){return `<svg width="480" height="320" viewBox="0 0 480 32
 
 /* ════════ CONFIGURAÇÃO ════════ */
 const FB_DB='https://ensaios-calibracoes-default-rtdb.firebaseio.com';
-const MAQ_ID='MAQ01', SALE_TTL=240000, PORCOES_CHEIO=14;
+const MAQ_ID='MAQ01', SALE_TTL=240000;
+function PORC_CHEIO(){ return CFG&&CFG.porcoes>0 ? CFG.porcoes : 14; }
 function ls(k,d){ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):d; }catch(e){ return d; } }
 function lsSet(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
 // preço e tempo de descida vêm do app de configuração quando aberto no mesmo aparelho
 let CFG=null; // parâmetros recebidos do app de configuração
-async function loadCfg(){ try{ const r=await fetch(`${FB_DB}/maquinas/${MAQ_ID}/config.json`,{cache:'no-store'}); const d=await r.json(); if(d&&d.tabela&&d.tabela.length>1) CFG=d; }catch(e){} return CFG; }
+async function loadCfg(){ try{ const r=await fetch(`${FB_DB}/maquinas/${MAQ_ID}/config.json`,{cache:'no-store'}); const d=await r.json(); if(d&&d.tabela&&d.tabela.length>1) CFG=d; }catch(e){}
+  if(CFG && PORC_CHEIO()!==ls('maq_cheio',null)){ porcoes=PORC_CHEIO(); lsSet('maq_cheio',porcoes); lsSet('maq_porcoes',porcoes); } // reservatório/copo mudou no app
+  if(porcoes===null) porcoes=PORC_CHEIO(); return CFG; }
 function price(){ return CFG&&CFG.preco!=null ? +CFG.preco : +ls('atl_price',12); }
 function serveTime(){ const pr=ls('atl_profiles',null), c=ls('atl_cur','A'); const t=pr&&pr[c]&&pr[c].ttot; return (t>0?t:3)*1000; }
-let porcoes=ls('maq_porcoes',PORCOES_CHEIO);
+let porcoes=ls('maq_porcoes',null);
 const brl=v=>'R$ '+Number(v).toFixed(2).replace('.',',');
 
 /* ════════ DESENHO DAS TELAS (mesmas da prancha) ════════ */
 function hit(cx,cy,r,act){ return `<circle class="tap" data-act="${act}" cx="${cx}" cy="${cy}" r="${r}" fill="transparent"/>`; }
 function hitRect(x,y,w,h,act){ return `<rect class="tap" data-act="${act}" x="${x}" y="${y}" width="${w}" height="${h}" fill="transparent"/>`; }
-function resv(){ const f=porcoes/PORCOES_CHEIO; return porcoes>0?reservoir(f,`≈ ${porcoes} porç${porcoes===1?'ão':'ões'}`):reservoir(.03,'vazio',232,262,C.pink2); }
+function resv(){ const n=porcoes===null?PORC_CHEIO():porcoes; const f=n/PORC_CHEIO(); return n>0?reservoir(f,`≈ ${n} porç${n===1?'ão':'ões'}`):reservoir(.03,'vazio',232,262,C.pink2); }
 const star=([x,y,r])=>`<path d="M${x} ${y-r} L${x+r*0.3} ${y-r*0.3} L${x+r} ${y} L${x+r*0.3} ${y+r*0.3} L${x} ${y+r} L${x-r*0.3} ${y+r*0.3} L${x-r} ${y} L${x-r*0.3} ${y-r*0.3}Z" fill="#FFD45E"/>`;
 
 const T={
@@ -216,14 +220,14 @@ function render(html){ $scr.innerHTML=html; }
 const $scr=document.getElementById('scr');
 function stopAll(){ clearInterval(S.timer); S.timer=null; clearInterval(S.poll); S.poll=null; if(S.es){ try{S.es.close();}catch(e){} S.es=null; } }
 function go(t,...a){ S.tela=t; render(T[t](...a)); }
-function inicio(){ stopAll(); loadCfg().then(()=>{ if(S.tela==='boas') go('boas'); }); if(porcoes<=0) go('reab'); else go('boas'); }
+function inicio(){ stopAll(); loadCfg().then(()=>{ if(S.tela==='boas') go('boas'); }); if(porcoes!==null && porcoes<=0) go("reab"); else go("boas"); }
 async function fbPatch(id,o){ try{ await fetch(`${FB_DB}/vendas/${id}.json`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)}); }catch(e){} }
 function newId(){ const a='ABCDEFGHJKMNPQRSTUVWXYZ23456789', r=new Uint8Array(6); crypto.getRandomValues(r); return [...r].map(x=>a[x%a.length]).join(''); }
 function makeQR(text){ const q=qrcode(0,'M'); q.addData(text); q.make(); const n=q.getModuleCount(); let d='';
   for(let r=0;r<n;r++) for(let c=0;c<n;c++) if(q.isDark(r,c)) d+=`M${c} ${r}h1v1h-1z`; return {n,d}; }
 
 async function quero(){
-  if(porcoes<=0){ go('reab'); return; }
+  if(porcoes!==null && porcoes<=0){ go("reab"); return; }
   stopAll(); go('gerando');
   const id=newId(); S.id=id; S.exp=Date.now()+SALE_TTL;
   try{
@@ -264,7 +268,7 @@ $scr.addEventListener('click',e=>{ const t=e.target.closest('.tap'); if(!t) retu
   if(a==='quero') quero();
   else if(a==='cancelar'){ if(S.id) fbPatch(S.id,{status:'cancelado'}); inicio(); }
   else if(a==='outro'||a==='inicio') inicio();
-  else if(a==='pronto'){ porcoes=PORCOES_CHEIO; lsSet('maq_porcoes',porcoes); inicio(); } });
+  else if(a==='pronto'){ porcoes=PORC_CHEIO(); lsSet('maq_porcoes',porcoes); inicio(); } });
 
 /* ════════ ESCALA: display 3:2 ocupando a tela ════════ */
 function fit(){ const W=innerWidth-24, H=innerHeight-60; let w=Math.min(W,H*1.5); const d=document.getElementById('disp');
