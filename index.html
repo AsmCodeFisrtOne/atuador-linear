@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   ATUADOR LINEAR · App de controle BLE (motor de passo NEMA + TB6600 + ESP32-S3)
-  Arquivo: index.html  ·  App Rev.14  ·  2026-10-16
+  Arquivo: index.html  ·  App Rev.15  ·  2026-10-16
   ─────────────────────────────────────────────────────────────────────────────
   CHANGELOG
    Rev.01 – Primeira versão: telas Operação / Perfil / Conexão, curva PCHIP (IPP3)
@@ -36,6 +36,8 @@
             ao receber "pago", dispara o ciclo e marca "servido". Campo Preço (R$).
    Rev.14 – Simulação de venda REMOVIDA do app (passou para maquina.html, que simula
             o display). App volta a ser só configuração. Preço permanece como parâmetro.
+   Rev.15 – Parâmetros (preço, tempo e tabela da curva) espelhados no Firebase em
+            maquinas/MAQ01/config para o simulador do display usar (só simulação).
   ─────────────────────────────────────────────────────────────────────────────
   PROTOCOLO BLE (para o firmware ESP32-S3)
    Serviço Nordic UART (NUS)  6e400001-b5a3-f393-e0a9-e50e24dcca9e
@@ -390,7 +392,7 @@ nav svg{width:24px;height:24px}
 
 <script>
 'use strict';
-const APP_REV = 'Rev.14';
+const APP_REV = 'Rev.15';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = 20;      // bytes por escrita BLE
@@ -416,7 +418,15 @@ let profiles = store.get('atl_profiles', null) || { A:defProfile(), B:defProfile
 let cur = store.get('atl_cur','A'); if(!profiles[cur]) cur=Object.keys(profiles)[0];
 let sentSig = ''; // não persiste: o ESP32 pode ter reiniciado → reenvia sempre ao abrir/conectar
 const P = () => profiles[cur];
-function save(){ store.set('atl_profiles',profiles); store.set('atl_cur',cur); updateDirty(); try{ refreshMini(); }catch(e){} }
+function save(){ store.set('atl_profiles',profiles); store.set('atl_cur',cur); updateDirty(); try{ refreshMini(); }catch(e){} try{ publishSim(); }catch(e){} }
+/* espelho dos parâmetros para o SIMULADOR do display (maquina.html) — no produto final vão por BLE ao ESP32 */
+const FB_DB='https://ensaios-calibracoes-default-rtdb.firebaseio.com', MAQ_ID='MAQ01';
+let pubT=null;
+function publishSim(){ clearTimeout(pubT); pubT=setTimeout(async()=>{
+  try{ const p=P(), v=table(p).map(x=>Math.round(x*10));
+    await fetch(`${FB_DB}/maquinas/${MAQ_ID}/config.json`,{method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({preco:+store.get('atl_price',12),ttot:p.ttot,dt:DT_MS,tabela:v,perfil:cur,atualizado:{'.sv':'timestamp'}})});
+  }catch(e){} },800); }
 
 /* PCHIP (Fritsch–Carlson) — mesmo modelo do IPP3 */
 function pchip(pts){
@@ -932,7 +942,7 @@ function simTick(){
 /* ═════════════ PREÇO (parâmetro da máquina; lido pelo display) ═════════════ */
 let price=store.get('atl_price',12);
 $('cPrice').value=price;
-$('cPrice').addEventListener('change',()=>{ const v=parseFloat($('cPrice').value); if(!isNaN(v)&&v>=0){ price=+v.toFixed(2); store.set('atl_price',price); } $('cPrice').value=price; });
+$('cPrice').addEventListener('change',()=>{ const v=parseFloat($('cPrice').value); if(!isNaN(v)&&v>=0){ price=+v.toFixed(2); store.set('atl_price',price); publishSim(); } $('cPrice').value=price; });
 
 /* ═════════════ NAVEGAÇÃO ═════════════ */
 let curSec='op';
