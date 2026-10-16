@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.08 · 2026-10-16
+  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.09 · 2026-10-16
   Faz o papel do display TFT (480×320) até o firmware do Device ficar pronto:
    1 Boas-vindas → 2 Pix (QR real, pedido no Firebase) → 3 Aprovado → 4 Servindo
    → 5 Bom apetite → (6 Reabastecer quando acabam as porções)
@@ -19,6 +19,7 @@
   Rev.08 – Atualização automática: escuta a configuração no Firebase em tempo real
            (+ consulta a cada 5 s); a tela inicial se redesenha sozinha. Venda em
            andamento não é interrompida (o novo valor vale a partir da próxima).
+  Rev.09 – Toque longo não abre o menu do navegador.
 -->
 <html lang="pt-BR"><head>
 <meta charset="utf-8">
@@ -37,10 +38,12 @@ body{display:flex;align-items:center;justify-content:center}
 .tap:active{opacity:.85}
 #tag{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);color:#8a7a70;font-size:12px;letter-spacing:.5px;text-align:center}
 #fs{position:fixed;top:10px;right:10px;background:#2a2320;color:#d9c8bb;border:none;border-radius:8px;padding:6px 10px;font-family:inherit;font-size:13px}
+body{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
 </style></head><body>
 <div id="disp"><div id="scr"></div></div>
 <button id="fs">⛶ tela cheia</button>
-<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.08</div>
+<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.09</div>
 <script>
 'use strict';
 // Copyright (c) 2009 Kazuhiko Arase
@@ -307,4 +310,7 @@ function applyCfg(d){
 
 // 1ª abertura: espera a configuração do Firebase (máx. 2,5 s) antes de desenhar, para não mostrar valores antigos
 if(CFG) inicio(); else { render(screen('')); Promise.race([loadCfg(),new Promise(r=>setTimeout(r,2500))]).then(inicio); }
+
+/* bloqueia o menu de toque longo do navegador (Android/iOS) fora dos campos de texto */
+document.addEventListener('contextmenu',e=>{ if(!e.target.closest('input,textarea,select')) e.preventDefault(); },{capture:true});
 </script></body></html>
