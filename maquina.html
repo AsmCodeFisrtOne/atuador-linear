@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.07 · 2026-10-16
+  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.08 · 2026-10-16
   Faz o papel do display TFT (480×320) até o firmware do Device ficar pronto:
    1 Boas-vindas → 2 Pix (QR real, pedido no Firebase) → 3 Aprovado → 4 Servindo
    → 5 Bom apetite → (6 Reabastecer quando acabam as porções)
@@ -16,6 +16,9 @@
            curva a partir da posição atual do êmbolo; porções = (restante ÷ copo).
   Rev.07 – Sem "pulo" de preço ao recarregar: usa a última configuração recebida (cache)
            e só desenha após ler o Firebase; não usa mais o preço local do app.
+  Rev.08 – Atualização automática: escuta a configuração no Firebase em tempo real
+           (+ consulta a cada 5 s); a tela inicial se redesenha sozinha. Venda em
+           andamento não é interrompida (o novo valor vale a partir da próxima).
 -->
 <html lang="pt-BR"><head>
 <meta charset="utf-8">
@@ -37,7 +40,7 @@ body{display:flex;align-items:center;justify-content:center}
 </style></head><body>
 <div id="disp"><div id="scr"></div></div>
 <button id="fs">⛶ tela cheia</button>
-<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.07</div>
+<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.08</div>
 <script>
 'use strict';
 // Copyright (c) 2009 Kazuhiko Arase
@@ -289,6 +292,19 @@ function fit(){ const W=innerWidth-24, H=innerHeight-60; let w=Math.min(W,H*1.5)
   $scr.style.width=w+'px'; $scr.style.height=(w/1.5)+'px'; }
 addEventListener('resize',fit); fit();
 document.getElementById('fs').onclick=()=>{ const el=document.documentElement; (el.requestFullscreen||el.webkitRequestFullscreen||(()=>{})).call(el); };
+/* ════════ ATUALIZAÇÃO AUTOMÁTICA DA CONFIGURAÇÃO ════════ */
+function applyCfg(d){
+  if(!d||!d.tabela||d.tabela.length<2) return;
+  const changed=JSON.stringify(d)!==JSON.stringify(CFG); CFG=d; lsSet('maq_cfg',d);
+  if(changed && (S.tela==='boas'||S.tela==='reab')) go(porcoesRest()<=0?'reab':'boas'); // só nas telas de espera
+}
+(function watchCfg(){
+  try{ const es=new EventSource(`${FB_DB}/maquinas/${MAQ_ID}/config.json`);
+    const h=e=>{ try{ const m=JSON.parse(e.data); if(m.path==='/') applyCfg(m.data); else loadCfg().then(applyCfg); }catch(_){} };
+    es.addEventListener('put',h); es.addEventListener('patch',h); }catch(e){}
+  setInterval(async()=>{ try{ const r=await fetch(`${FB_DB}/maquinas/${MAQ_ID}/config.json`,{cache:'no-store'}); applyCfg(await r.json()); }catch(e){} },5000);
+})();
+
 // 1ª abertura: espera a configuração do Firebase (máx. 2,5 s) antes de desenhar, para não mostrar valores antigos
 if(CFG) inicio(); else { render(screen('')); Promise.race([loadCfg(),new Promise(r=>setTimeout(r,2500))]).then(inicio); }
 </script></body></html>
