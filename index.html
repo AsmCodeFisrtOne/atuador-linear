@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   ATUADOR LINEAR · App de controle BLE (motor de passo NEMA + TB6600 + Device)
-  Arquivo: index.html  ·  App Rev.28  ·  2026-10-16
+  Arquivo: index.html  ·  App Rev.30  ·  2026-10-16
   ─────────────────────────────────────────────────────────────────────────────
   CHANGELOG
    Rev.01 – Primeira versão: telas Operação / Perfil / Conexão, curva PCHIP (IPP3)
@@ -64,12 +64,19 @@
             da curva (antes limitava o Teach In a 1,6× o curso da curva).
    Rev.27 – Fim de curso do modo demonstração: 80 voltas.
    Rev.28 – Toque longo nos botões não abre mais o menu do navegador.
+   Rev.29 – Reabastecimento na aba Máquina: doses disponíveis agora, "Subir para
+            reabastecer" (UP) e "Reservatório cheio" (novo comando REFILL).
+   Rev.30 – Botão SERVIR 1 COPO na Operação (DOSE). Acesso exclusivo: só um aparelho
+            por vez opera a máquina (trava de sessão no Firebase + Device aceita
+            1 conexão BLE; segunda conexão recebe ERR,BUSY).
   ─────────────────────────────────────────────────────────────────────────────
   PROTOCOLO BLE (para o firmware do Device)
    Serviço Nordic UART (NUS)  6e400001-b5a3-f393-e0a9-e50e24dcca9e
      RX (app → Device, write)  6e400002-b5a3-f393-e0a9-e50e24dcca9e
      TX (Device → app, notify) 6e400003-b5a3-f393-e0a9-e50e24dcca9e
    Nome anunciado começando com "ATUADOR" (ex.: ATUADOR-01).
+   ACESSO EXCLUSIVO: aceitar só 1 conexão BLE por vez e parar de anunciar enquanto
+   conectado. Se outra central conectar mesmo assim → enviar ERR,BUSY e desconectá-la.
    Mensagens em texto ASCII, campos separados por vírgula, terminadas em '\n'.
    O app fragmenta em pacotes de 20 bytes → o firmware deve juntar até '\n'.
 
@@ -101,6 +108,9 @@
      ESTOP         → parada imediata (trava até RESET)
      RESET         → rearma após emergência
      ZERO          → Teach In: define a posição atual como TOPO (pos = 0)
+     REFILL        → Reabastecimento confirmado: êmbolo no topo + reservatório cheio.
+                     Zera pos (topo), sai do estado "vazio" e libera novas doses.
+                     Só aceito parado e no topo (fc bit0) → senão ERR,REFILL,NAO_TOPO.
      JOG,<dir>,<rpm_x10>  dir: 1 = sobe, -1 = desce, 0 = para.
                     Enviado a cada 100 ms enquanto o botão está pressionado.
                     WATCHDOG: sem JOG por 300 ms → firmware para o motor.
@@ -137,7 +147,7 @@ body{overflow:hidden}
 .wide #opL{flex:1.1}
 .wide .jog{height:120px}
 .wide #bAuto{height:80px!important}
-.wide #bUpAuto{height:64px!important}
+.wide #bUpAuto,.wide #bDose{height:64px!important}
 .wide #sec-cx,.wide #sec-mq{flex-direction:column;align-items:stretch;max-width:620px}
 .big{font-size:26px;font-weight:700}
 .wide #chart{height:300px}
@@ -302,7 +312,10 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
  <div class="col" id="opR">
 
   <button class="btn g-blue" id="bAuto" style="height:62px;font-size:20px">▶&nbsp; CICLO AUTOMÁTICO</button>
-  <button class="btn g-green" id="bUpAuto" style="height:54px;font-size:18px">▲&nbsp; SUBIDA AUTOMÁTICA</button>
+  <div class="row">
+    <button class="btn g-orange" id="bDose" style="flex:1;height:54px;font-size:16px">🍦&nbsp; SERVIR 1 COPO</button>
+    <button class="btn g-green" id="bUpAuto" style="flex:1;height:54px;font-size:16px">▲&nbsp; SUBIDA AUTO</button>
+  </div>
   <div class="row">
     <button class="btn sec jog" id="bUp" data-dir="1"><span class="ar">▲</span>SUBIR<small id="upLbl">segure p/ acelerar</small></button>
     <button class="btn sec jog" id="bDn" data-dir="-1"><span class="ar">▼</span>DESCER<small id="dnLbl">segure p/ acelerar</small></button>
@@ -418,10 +431,23 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
     <div id="mCheck" style="font-size:13px;color:var(--mut)"></div>
     <div class="hint" style="text-align:left">A curva da aba Perfil cobre o <b>reservatório inteiro</b> (Teach In). Cada copo avança só o seu trecho da curva, a partir de onde o êmbolo está. Os volumes definem o tamanho de cada trecho e as <b>doses disponíveis</b>.</div>
   </div>
+
+  <div class="card" style="display:flex;flex-direction:column;gap:10px;border:1px solid rgba(47,163,255,.35)">
+    <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:16px;font-weight:700">Reabastecimento</span><span class="lbl" id="mPos">posição: —</span></div>
+    <div class="card" style="background:var(--card2);padding:10px 12px;display:flex;justify-content:space-around;text-align:center">
+      <div class="kv" style="align-items:center"><b class="big" id="mAvail" style="color:var(--acc);height:auto;line-height:1.1">—</b><span>doses disponíveis agora</span></div>
+    </div>
+    <div style="font-size:12px;color:var(--mut);line-height:1.45">1) Toque <b style="color:var(--tx)">Subir para reabastecer</b> — o êmbolo volta ao topo · 2) troque/encha o reservatório · 3) toque <b style="color:var(--tx)">Reservatório cheio</b>.</div>
+    <div class="row">
+      <button class="btn g-blue" id="bRefUp" style="flex:1;height:52px;font-size:15px">⤒ Subir para reabastecer</button>
+      <button class="btn g-green" id="bRefOk" style="flex:1;height:52px;font-size:15px">✓ Reservatório cheio</button>
+    </div>
+  </div>
 </section>
 
 <section id="sec-cx">
   <h2>Conexão Bluetooth</h2>
+  <div id="busyBox" class="errbox" style="display:none"></div>
   <div id="noBle2" class="warnbox" style="display:none;position:relative;padding-right:34px"><span id="noBleTxt"></span><button id="noBleX" style="position:absolute;top:4px;right:6px;background:none;border:none;color:inherit;font-size:20px;line-height:1;padding:4px" aria-label="Fechar">×</button></div>
   <div class="card" style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px">
     <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#2fa3ff" stroke-width="1.6"><circle cx="12" cy="12" r="11" stroke="#2e3a47"/><path d="M7 7.5l10 9-5 4.5V3l5 4.5-10 9"/></svg>
@@ -458,7 +484,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 
 <script>
 'use strict';
-const APP_REV = 'Rev.28';
+const APP_REV = 'Rev.30';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = 20;      // bytes por escrita BLE
@@ -492,7 +518,7 @@ function mqGet(){ return store.get('atl_mq',{res:2000,cup:150}); }
 function publishSim(){ clearTimeout(pubT); pubT=setTimeout(async()=>{
   try{ const p=P(), v=table(p).map(x=>Math.round(x*10));
     await fetch(`${FB_DB}/maquinas/${MAQ_ID}/config.json`,{method:'PUT',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({preco:+store.get('atl_price',12),ttot:p.ttot,dt:DT_MS,tabela:v,perfil:cur,reservatorio_ml:mqGet().res,copo_ml:mqGet().cup,porcoes:Math.floor(mqGet().res/mqGet().cup),atualizado:{'.sv':'timestamp'}})});
+      body:JSON.stringify({preco:+store.get('atl_price',12),ttot:p.ttot,dt:DT_MS,tabela:v,perfil:cur,reabastecido:store.get('atl_refill',0),reservatorio_ml:mqGet().res,copo_ml:mqGet().cup,porcoes:Math.floor(mqGet().res/mqGet().cup),atualizado:{'.sv':'timestamp'}})});
   }catch(e){} },800); }
 
 /* PCHIP (Fritsch–Carlson) — mesmo modelo do IPP3 */
@@ -692,7 +718,8 @@ function handleLine(l){
     case 'S': onStatus(+a[1],+a[2]/10,+a[3],+a[4],+a[5]); break;
     case 'PIN': if(a[1]==='OK'){ authed=true; onAuthed(); } else { authed=false; toast('PIN incorreto'); showPin(true); forgetPin(); } break;
     case 'ACK': if(ackWait[a[1]]) { ackWait[a[1]](true); delete ackWait[a[1]]; } break;
-    case 'ERR': if(ackWait[a[1]]) { ackWait[a[1]](false); delete ackWait[a[1]]; } toast('Erro do equipamento: '+a.slice(1).join(',')); break;
+    case 'ERR': if(a[1]==='BUSY'){ toast('Máquina em uso por outro aparelho'); showBusy('Bluetooth'); setTimeout(()=>{ try{ if(dev&&dev.gatt.connected) dev.gatt.disconnect(); }catch(e){} },100); break; }
+      if(ackWait[a[1]]) { ackWait[a[1]](false); delete ackWait[a[1]]; } toast('Erro do equipamento: '+a.slice(1).join(',')); break;
     case 'VER': fwVer=a[1]||''; updHeader(); break;
   }
 }
@@ -736,9 +763,9 @@ function sendPin(pin,remember){
 }
 function showPin(v){ $('pinCard').style.display=v?'flex':'none'; if(v){ $('pinDev').textContent=dev?dev.name:''; $('pinIn').value=''; nav('cx'); } }
 $('bPin').onclick=()=>{ const v=$('pinIn').value.replace(/\D/g,''); if(v.length!==6){ toast('O PIN tem 6 dígitos'); return; } sendPin(v,$('pinRem').checked); };
-function onAuthed(){ sentSig=''; showPin(false); updHeader(); toast('Conectado ✓'); $('cxMsg').textContent='Conectado a '+(dev?dev.name:''); if(!demo) nav('op'); }
+async function onAuthed(){ const r=await claimLock(); if(!r.ok){ showBusy('outro aparelho'); toast('Máquina em uso por outro aparelho'); try{ dev.gatt.disconnect(); }catch(e){} return; } $('busyBox').style.display='none'; startLockBeat(); sentSig=''; showPin(false); updHeader(); toast('Conectado ✓'); $('cxMsg').textContent='Conectado a '+(dev?dev.name:''); if(!demo) nav('op'); }
 function onDisconnect(){ const was=connected; cleanupBle(); if(was) toast('Conexão perdida — motor parado pelo watchdog'); }
-function cleanupBle(){ connected=false; authed=false; rxC=txC=null; jogStop(); updHeader(); onStatus(0,0,lastSt.pos,0,0); }
+function cleanupBle(){ if(authed) releaseLock(); connected=false; authed=false; rxC=txC=null; jogStop(); updHeader(); onStatus(0,0,lastSt.pos,0,0); }
 $('bScan').onclick=()=>connectTo(null);
 $('bDisc').onclick=()=>{ if(demo){ setDemo(false); return; } try{ send('STOP'); }catch(e){} setTimeout(()=>{ if(dev&&dev.gatt.connected) dev.gatt.disconnect(); },150); };
 function renderDevs(){
@@ -759,7 +786,7 @@ function updHeader(){
   if(!connected&&!demo) $('cxMsg').textContent='Toque em procurar e escolha o atuador na lista.';
   ['bAuto','bTop','bBot'].forEach(id=>$(id).disabled=!online()); document.querySelectorAll('.jog').forEach(b=>b.disabled=!online()); $('bUpAuto').disabled=!online()||lastSt.st===1||lastSt.st===2;
   $('bSend').disabled=!online();
-  ['mRes','mCup','cPrice'].forEach(id=>$(id).disabled=!online()); $('mOff').style.display=online()?'none':'block';
+  ['mRes','mCup','cPrice','bRefUp','bRefOk'].forEach(id=>$(id).disabled=!online()); $('mOff').style.display=online()?'none':'block';
   lockPf();
   renderDevs(); updateDirty();
 }
@@ -804,13 +831,13 @@ function onStatus(st,rpm,pos,tms,fc){
   $('tBar').style.width=(st===1?clamp(tt/T,0,1)*100:st===2?clamp(pos/Math.max(stroke,1),0,1)*100:0)+'%';
   $('vFc').textContent=(fc&1)?'TOPO':(fc&2)?'FUNDO':'OK'; $('vFc').style.color=(fc&3)?'var(--warn)':'var(--ok)';
   const nt = st===1 ? tt : -1; if(nt!==nowT){ nowT=nt; if(curSec==='pf') drawChart(); }
-  miniCursor(st,rpm,tt); if(curSec==='pf') $('tiPos').textContent='posição: '+fmtInt(pos)+' passos';
+  miniCursor(st,rpm,tt); if(curSec==='mq') updAvail(); if(curSec==='pf') $('tiPos').textContent='posição: '+fmtInt(pos)+' passos';
   const ba=$('bAuto');
   const bu=$('bUpAuto'), busy=(st===1||st===2);
   ba.classList.toggle('g-orange',busy); ba.classList.toggle('g-blue',!busy);
   if(busy){ ba.innerHTML='■&nbsp; PARAR'; }
   else { ba.innerHTML=(pos>1?'▶&nbsp; CICLO AUTOMÁTICO <small style="font-weight:400;font-size:13px;opacity:.85">(continua)</small>':'▶&nbsp; CICLO AUTOMÁTICO'); }
-  bu.disabled = busy || !online();
+  bu.disabled = busy || !online(); $('bDose').disabled = busy || !online();
   const be=$('bEstop');
   be.classList.toggle('g-wine',st===5); be.classList.toggle('g-red',st!==5);
   be.innerHTML = st===5 ? '↻&nbsp; REARMAR' : '■&nbsp; PARADA DE EMERGÊNCIA';
@@ -900,6 +927,14 @@ $('bAuto').onclick=async()=>{
   else if(lastSt.pos>1) toast('Continuando da posição atual');
   send('AUTO');
 };
+$('bDose').onclick=async()=>{
+  if(lastSt.st===5){ toast('Rearme a emergência primeiro'); return; }
+  if(lastSt.st!==0){ toast('Aguarde o motor parar'); return; }
+  if(!teachSteps()){ toast('Faça o Teach In primeiro (aba Perfil)'); return; }
+  const ts=teachSteps(), ppc=ts*mq.cup/mq.res; if(Math.floor((ts-Math.max(0,lastSt.pos))/ppc+1e-6)<1){ toast('Sem doses — reabasteça (aba Máquina)'); return; }
+  if(isDirty()){ const ok=await sendProfile(); if(!ok) return; }
+  stroke=descSteps(); send('DOSE'); toast('Servindo 1 copo…');
+};
 $('bUpAuto').onclick=async()=>{
   if(lastSt.st===5){ toast('Rearme a emergência primeiro'); return; }
   if(lastSt.pos<=0){ toast('O atuador já está no topo'); return; }
@@ -937,7 +972,39 @@ window.addEventListener('blur',jogStop);
 
 /* ═════════════ MODO DEMO (simulação) ═════════════ */
 const sim={st:0,pos:0,rpm:0,t:0,tab:null,cum:null,dt:DT_MS,upTarget:0,dir:1,jog:{dir:0,rpm:0,last:0},cfg:null,iv:null};
-function setDemo(on){
+/* ═════════════ ACESSO EXCLUSIVO (1 aparelho por vez) ═════════════
+   Trava em maquinas/MAQ01/sessao {id, ts}. Renovada a cada 8 s; vale 25 s.
+   Sem internet a trava é ignorada (o Device já aceita só 1 conexão BLE). */
+const SESS_ID=(()=>{ try{ let v=sessionStorage.getItem('atl_sess'); if(!v){ v=Math.random().toString(36).slice(2,10); sessionStorage.setItem('atl_sess',v); } return v; }catch(e){ return Math.random().toString(36).slice(2,10); } })();
+const LOCK_URL=`${FB_DB}/maquinas/${MAQ_ID}/sessao.json`, LOCK_TTL=25000;
+let lockIv=null;
+async function claimLock(){
+  try{
+    const cur=await (await fetch(LOCK_URL,{cache:'no-store'})).json();
+    if(cur && cur.id!==SESS_ID && Date.now()-cur.ts<LOCK_TTL) return {ok:false,cur};
+    await fetch(LOCK_URL,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:SESS_ID,ts:Date.now(),ua:navigator.userAgent.slice(0,60)})});
+    const chk=await (await fetch(LOCK_URL,{cache:'no-store'})).json();      // confirma que ninguém sobrescreveu
+    return {ok:!chk||chk.id===SESS_ID,cur:chk};
+  }catch(e){ return {ok:true,offline:true}; }
+}
+function startLockBeat(){ clearInterval(lockIv); lockIv=setInterval(async()=>{
+  if(!online()){ clearInterval(lockIv); return; }
+  try{ const cur=await (await fetch(LOCK_URL,{cache:'no-store'})).json();
+    if(cur && cur.id!==SESS_ID && Date.now()-cur.ts<LOCK_TTL){ lostLock(); return; }
+    await fetch(LOCK_URL,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:SESS_ID,ts:Date.now(),ua:navigator.userAgent.slice(0,60)})});
+  }catch(e){} },8000); }
+function releaseLock(){ clearInterval(lockIv);
+  try{ fetch(LOCK_URL,{cache:'no-store'}).then(r=>r.json()).then(cur=>{ if(cur&&cur.id===SESS_ID) fetch(LOCK_URL,{method:'DELETE',keepalive:true}); }).catch(()=>{}); }catch(e){} }
+function lostLock(){ toast('Outro aparelho assumiu a máquina'); showBusy('outro aparelho'); if(demo) setDemo(false); else { try{ if(dev&&dev.gatt.connected) dev.gatt.disconnect(); }catch(e){} } }
+function showBusy(src){ const b=$('busyBox'); b.innerHTML=`<b>Máquina em uso</b> por ${src}. Só um aparelho pode configurar/operar por vez. Aguarde ele desconectar (ou até 25 s sem sinal) e tente de novo.`; b.style.display='block'; }
+addEventListener('pagehide',()=>{ if(online()) releaseLock(); });
+
+async function setDemo(on){
+  if(on){ const r=await claimLock(); if(!r.ok){ showBusy('outro aparelho'); toast('Máquina em uso por outro aparelho'); return; } $('busyBox').style.display='none'; }
+  else releaseLock();
+  _setDemo(on); if(on) startLockBeat();
+}
+function _setDemo(on){
   if(on && connected){ $('bDisc').click(); }
   demo=on; $('bDemo').classList.toggle('on',on);
   if(on){ sentSig=''; authed=true; sim.st=0; sim.rpm=0; sim.iv=setInterval(simTick,DT_MS); toast('Modo demonstração ativo'); }
@@ -964,6 +1031,7 @@ function simCmd(line){
     case 'ESTOP': sim.st=5; sim.rpm=0; break;
     case 'RESET': if(sim.st===5) sim.st=0; break;
     case 'ZERO': if(sim.st===0){ sim.pos=0; sim.rpm=0; } break;
+    case 'REFILL': if(sim.st===0 && sim.pos<=1){ sim.pos=0; sim.rpm=0; } else setTimeout(()=>handleLine('ERR,REFILL,NAO_TOPO'),40); break;
     case 'JOG': { const d=+a[1]; if(sim.st===5) break; sim.jog={dir:d,rpm:+a[2]/10,last:performance.now()}; if(d) sim.st=d>0?3:4; break; }
   }
 }
@@ -1016,6 +1084,7 @@ let price=store.get('atl_price',12);
 let mq=store.get('atl_mq',{res:2000,cup:150});
 function porcoes(){ return Math.floor(mq.res/mq.cup); }
 function updMq(){
+  try{ updAvail(); }catch(e){}
   if(document.activeElement!==$('mRes')) $('mRes').value=mq.res;
   if(document.activeElement!==$('mCup')) $('mCup').value=mq.cup;
   if(document.activeElement!==$('cPrice')) $('cPrice').value=price;
@@ -1033,6 +1102,26 @@ function updMq(){
   else $('mCheck').textContent='';
 }
 function doseSteps(){ const ts=teachSteps(); return ts? ts/mq.res*mq.cup : 0; }
+function updAvail(){
+  $('mPos').textContent='posição: '+fmtInt(lastSt.pos)+' passos';
+  const ts=teachSteps(); if(!ts){ $('mAvail').textContent='—'; return; }
+  const ppc=ts*mq.cup/mq.res, n=Math.max(0,Math.floor((ts-Math.max(0,lastSt.pos))/ppc+1e-6));
+  $('mAvail').textContent=n; $('mAvail').style.color=n>0?'var(--acc)':'var(--red)';
+}
+$('bRefUp').onclick=()=>{
+  if(lastSt.st===5){ toast('Rearme a emergência primeiro'); return; }
+  if(lastSt.st!==0){ toast('Aguarde o motor parar'); return; }
+  if(lastSt.pos<=0){ toast('O êmbolo já está no topo'); return; }
+  if(isDirty()) sendProfile().then(ok=>{ if(ok) send('UP'); }); else send('UP');
+  toast('Subindo para reabastecer…');
+};
+$('bRefOk').onclick=()=>{
+  if(lastSt.st!==0){ toast('Aguarde o motor parar'); return; }
+  if(lastSt.pos>1){ toast('Suba o êmbolo ao topo primeiro'); return; }
+  if(!confirm('Confirmar: reservatório cheio e êmbolo no topo?')) return;
+  send('REFILL'); store.set('atl_refill',Date.now()); publishSim(); updAvail();
+  toast('Reabastecido ✓ doses liberadas');
+};
 function setMq(k,v,min){ if(isNaN(v)||v<min) { updMq(); return; } mq[k]=+v; if(mq.cup>mq.res) mq.cup=mq.res; store.set('atl_mq',mq); updMq(); publishSim(); updateDirty(); }
 $('mRes').addEventListener('change',()=>setMq('res',parseFloat($('mRes').value),50));
 $('mCup').addEventListener('change',()=>setMq('cup',parseFloat($('mCup').value),5));
