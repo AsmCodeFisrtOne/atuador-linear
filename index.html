@@ -1,0 +1,693 @@
+<!doctype html>
+<!--
+  ATUADOR LINEAR · App de controle BLE (motor de passo NEMA + TB6600 + ESP32-S3)
+  Arquivo: index.html  ·  App Rev.01  ·  2026-10-16
+  ─────────────────────────────────────────────────────────────────────────────
+  CHANGELOG
+   Rev.01 – Primeira versão: telas Operação / Perfil / Conexão, curva PCHIP (IPP3)
+            editável, rampa de partida delimitada, subida constante + compensação
+            em passos, jog manual com aceleração por tempo pressionado, parada de
+            emergência, PIN, presets A/B/C, modo DEMO (simulação sem hardware).
+  ─────────────────────────────────────────────────────────────────────────────
+  PROTOCOLO BLE (para o firmware ESP32-S3)
+   Serviço Nordic UART (NUS)  6e400001-b5a3-f393-e0a9-e50e24dcca9e
+     RX (app → ESP32, write)  6e400002-b5a3-f393-e0a9-e50e24dcca9e
+     TX (ESP32 → app, notify) 6e400003-b5a3-f393-e0a9-e50e24dcca9e
+   Nome anunciado começando com "ATUADOR" (ex.: ATUADOR-01).
+   Mensagens em texto ASCII, campos separados por vírgula, terminadas em '\n'.
+   O app fragmenta em pacotes de 20 bytes → o firmware deve juntar até '\n'.
+
+   App → ESP32
+     PIN,<6 dígitos>
+     CFG,<micro>,<vsub_x10>,<comp_passos>,<vman_x10>,<rampa_ms>,<amax_rpm_s>,<ttot_ms>
+     PRF,<dt_ms>,<n>,<sum16>,<v0>,<v1>,...,<vn-1>   (v em 0,1 RPM; sum16 = Σv mod 65536)
+     AUTO          → ciclo: desce pela tabela, depois sobe a vsub constante
+                     por (passos da descida + comp_passos)
+     STOP          → parada com desaceleração
+     ESTOP         → parada imediata (trava até RESET)
+     RESET         → rearma após emergência
+     JOG,<dir>,<rpm_x10>  dir: 1 = sobe, -1 = desce, 0 = para.
+                    Enviado a cada 100 ms enquanto o botão está pressionado.
+                    WATCHDOG: sem JOG por 300 ms → firmware para o motor.
+   ESP32 → App
+     S,<estado>,<rpm_x10>,<pos_passos>,<t_ms>,<fc>    (~20 Hz)
+        estado: 0 parado · 1 descendo(auto) · 2 subindo(auto) · 3 jog sobe
+                4 jog desce · 5 emergência
+        pos_passos: 0 = topo, positivo para baixo
+        fc (bits): bit0 = fim de curso topo, bit1 = fim de curso fundo
+     PIN,OK | PIN,ERR
+     ACK,CFG | ACK,PRF | ERR,PRF
+     VER,<versão do firmware>
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0f1419">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Atuador Linear</title>
+<style>
+:root{--bg:#0f1419;--card:#1a2129;--card2:#222b35;--line:#2e3a47;--tx:#e6edf3;--mut:#8b98a5;--acc:#2fa3ff;--ok:#2ecc71;--warn:#f5a623;--red:#e5484d}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;background:var(--bg);color:var(--tx);font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{display:flex;flex-direction:column;overflow:hidden;padding-top:env(safe-area-inset-top)}
+button{font-family:inherit;cursor:pointer;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+button:disabled{opacity:.4;cursor:default}
+header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px}
+.logo{height:40px;max-width:150px;display:flex;align-items:center}
+.logo img{max-height:40px;max-width:150px}
+.logo .ph{width:120px;height:40px;border:2px dashed var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--mut);letter-spacing:1px}
+.pill{display:flex;align-items:center;gap:6px;background:var(--card);padding:6px 11px;border-radius:20px;font-size:12px;max-width:62%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--mut);flex:none}
+.dot.on{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+.dot.demo{background:var(--warn);box-shadow:0 0 6px var(--warn)}
+main{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+section{display:none;padding:0 16px 20px;flex-direction:column;gap:12px;max-width:560px;margin:0 auto}
+section.on{display:flex}
+.card{background:var(--card);border-radius:16px;padding:12px}
+.lbl{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.8px}
+h2{font-size:20px}
+.row{display:flex;gap:10px}
+.btn{border:none;border-radius:14px;font-weight:700;color:#fff;display:flex;align-items:center;justify-content:center;gap:8px}
+.btn.sec{background:var(--card2);border:1px solid var(--line)}
+.chip{font-size:12px;padding:5px 11px;border-radius:20px;background:var(--card2);color:var(--mut);border:none}
+.chip.on{background:rgba(47,163,255,.18);color:var(--acc);font-weight:700}
+.kv{display:flex;flex-direction:column;gap:2px;min-width:0}
+.kv b{font-size:18px;font-variant-numeric:tabular-nums}
+.kv span{font-size:10px;color:var(--mut);text-transform:uppercase}
+.field{display:flex;flex-direction:column;gap:5px;flex:1;min-width:0}
+.field small{font-size:10px;color:var(--mut)}
+.f{background:var(--card2);border:1px solid var(--line);border-radius:10px;color:var(--tx);font:600 15px inherit;font-family:inherit;padding:9px 10px;width:100%;-webkit-appearance:none;appearance:none}
+.f:focus{outline:none;border-color:var(--acc)}
+.unit{position:relative}
+.unit .f{padding-right:52px}
+.unit i{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-style:normal;font-size:12px;color:var(--mut);pointer-events:none}
+.jog{flex:1;height:92px;flex-direction:column;gap:2px;font-size:15px;touch-action:none}
+.jog .ar{font-size:26px;line-height:1}
+.jog small{font-weight:400;font-size:10px;color:var(--mut)}
+.jog.act{background:rgba(47,163,255,.22);border-color:var(--acc)}
+#chartWrap{touch-action:none;-webkit-user-select:none;user-select:none}
+#chart{display:block;width:100%;height:240px}
+.hint{font-size:10.5px;color:var(--mut);text-align:center}
+.warnbox{background:rgba(245,166,35,.12);border:1px solid rgba(245,166,35,.35);color:#ffd18a;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.4}
+.errbox{background:rgba(229,72,77,.12);border:1px solid rgba(229,72,77,.4);color:#ffb3b5;border-radius:12px;padding:10px 12px;font-size:12.5px}
+.dev{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.dev .n{font-weight:600}
+.dev .d{font-size:11px;color:var(--mut)}
+#pinIn{font-size:28px;letter-spacing:14px;text-align:center;font-weight:700;padding:10px}
+nav{display:flex;border-top:1px solid var(--line);background:#0b1015;padding-bottom:max(10px,env(safe-area-inset-bottom))}
+nav button{flex:1;background:none;border:none;color:var(--mut);display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;padding:8px 0 2px}
+nav button.on{color:var(--acc)}
+nav svg{width:24px;height:24px}
+#toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(20px);background:#26313c;color:var(--tx);padding:10px 16px;border-radius:12px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;max-width:90%;text-align:center;z-index:9;border:1px solid var(--line)}
+#toast.show{opacity:1;transform:translateX(-50%)}
+.sw{display:flex;align-items:center;justify-content:space-between;font-size:14px}
+.tog{width:46px;height:28px;border-radius:14px;background:var(--card2);border:1px solid var(--line);position:relative;flex:none}
+.tog::after{content:"";position:absolute;width:22px;height:22px;border-radius:50%;background:var(--mut);top:2px;left:2px;transition:.2s}
+.tog.on{background:rgba(245,166,35,.3);border-color:var(--warn)}
+.tog.on::after{left:20px;background:var(--warn)}
+.ptEdit{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--mut);padding:6px 4px 0}
+.ptEdit .f{padding:6px 8px;font-size:13px;width:78px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><img src="logo.png" alt="" onerror="this.outerHTML='<div class=ph>SEU LOGO</div>'"></div>
+  <div class="pill"><div class="dot" id="hdDot"></div><span id="hdTxt">desconectado</span></div>
+</header>
+
+<main>
+<!-- ═══════════════ OPERAÇÃO ═══════════════ -->
+<section id="sec-op" class="on">
+  <div id="noBle" class="warnbox" style="display:none"></div>
+  <div class="card" style="padding:10px 12px 10px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <span class="lbl">Atuador · tempo real</span><span class="chip" id="stChip">PARADO</span>
+    </div>
+    <svg viewBox="0 0 340 250" style="display:block;width:100%;max-width:400px;margin:4px auto 0">
+      <defs>
+        <linearGradient id="met" x1="0" x2="1"><stop offset="0" stop-color="#5b6b7b"/><stop offset=".5" stop-color="#9fb0c0"/><stop offset="1" stop-color="#5b6b7b"/></linearGradient>
+        <pattern id="thr" width="10" height="5" patternUnits="userSpaceOnUse"><rect width="10" height="5" fill="#7d8c9a"/><line x1="0" y1="0" x2="10" y2="5" stroke="#4d5966" stroke-width="1.4"/></pattern>
+      </defs>
+      <rect x="128" y="8" width="64" height="52" rx="5" fill="#2b333c" stroke="#56626e"/>
+      <g id="rotor" transform="rotate(0 160 34)">
+        <circle cx="160" cy="34" r="17" fill="#1e252c" stroke="#3d4853"/>
+        <line x1="160" y1="34" x2="160" y2="19" stroke="#2fa3ff" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="160" cy="34" r="4" fill="#9fb0c0"/>
+      </g>
+      <text x="210" y="30" fill="#8b98a5" font-size="10" font-weight="700">NEMA</text>
+      <text id="svRpm" x="210" y="46" fill="#2fa3ff" font-size="13" font-weight="700">0 RPM</text>
+      <rect x="140" y="60" width="40" height="22" fill="#3a444e"/>
+      <rect x="132" y="82" width="56" height="70" rx="3" fill="url(#met)" stroke="#4d5966"/>
+      <rect id="svRod" x="152" y="148" width="16" height="4" fill="url(#thr)"/>
+      <rect id="svCap" x="140" y="148" width="40" height="12" rx="3" fill="#c9d4de"/>
+      <line x1="96" y1="152" x2="120" y2="152" stroke="#8b98a5" stroke-dasharray="3 3"/>
+      <line x1="96" y1="236" x2="120" y2="236" stroke="#8b98a5" stroke-dasharray="3 3"/>
+      <text x="92" y="155" fill="#8b98a5" font-size="9" text-anchor="end">topo</text>
+      <text x="92" y="239" fill="#8b98a5" font-size="9" text-anchor="end">fundo</text>
+      <line x1="108" y1="152" x2="108" y2="236" stroke="#2e3a47" stroke-width="6" stroke-linecap="round"/>
+      <line id="svBar" x1="108" y1="152" x2="108" y2="152" stroke="#2fa3ff" stroke-width="6" stroke-linecap="round"/>
+      <g id="svArrow" opacity="0"><path d="M232 160 v40 m-8 -10 l8 10 l8 -10" fill="none" stroke="#2fa3ff" stroke-width="3" stroke-linecap="round"/></g>
+      <text id="svPct" x="252" y="186" fill="#e6edf3" font-size="20" font-weight="800">0%</text>
+      <text x="252" y="200" fill="#8b98a5" font-size="9">do curso</text>
+    </svg>
+    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--mut);margin-top:2px">
+      <span id="tNow">t = 0,00 s</span><span id="tTot">total 3,00 s</span></div>
+    <div style="height:6px;background:var(--card2);border-radius:3px;margin-top:4px;overflow:hidden">
+      <div id="tBar" style="width:0;height:100%;background:var(--acc);transition:width .1s linear"></div></div>
+  </div>
+
+  <div class="card row" style="justify-content:space-between;padding:10px 14px">
+    <div class="kv"><b id="vRpm">0</b><span>RPM</span></div>
+    <div class="kv"><b id="vPos">0</b><span>passos</span></div>
+    <div class="kv"><b id="vT">0,00 s</b><span>tempo</span></div>
+    <div class="kv"><b id="vFc">—</b><span>fim curso</span></div>
+  </div>
+
+  <div id="dirtyWarn" class="warnbox" style="display:none">Perfil alterado ainda não enviado — será enviado ao iniciar o ciclo.</div>
+
+  <button class="btn" id="bAuto" style="height:62px;background:linear-gradient(180deg,#2fa3ff,#1a7fd4);font-size:18px">▶&nbsp; CICLO AUTOMÁTICO</button>
+  <div class="row">
+    <button class="btn sec jog" id="bUp" data-dir="1"><span class="ar">▲</span>SUBIR<small id="upLbl">segure p/ acelerar</small></button>
+    <button class="btn sec jog" id="bDn" data-dir="-1"><span class="ar">▼</span>DESCER<small id="dnLbl">segure p/ acelerar</small></button>
+  </div>
+  <button class="btn" id="bEstop" style="height:54px;background:var(--red);font-size:16px;letter-spacing:1px">■&nbsp; PARADA DE EMERGÊNCIA</button>
+</section>
+
+<!-- ═══════════════ PERFIL ═══════════════ -->
+<section id="sec-pf">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+    <h2>Perfil de descida</h2>
+    <div class="row" style="gap:6px" id="presets"></div>
+  </div>
+  <div class="card" style="padding:8px 6px 8px">
+    <div id="chartWrap"><svg id="chart"></svg></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 6px 0;font-size:11px;gap:6px;flex-wrap:wrap">
+      <span style="color:var(--warn)">▮ Rampa de partida (0–<span id="rampLbl">0,40</span> s)</span>
+      <span id="accWarn" style="color:var(--red);display:none">▮ acima da aceleração máx.</span>
+    </div>
+    <div class="ptEdit" id="ptEdit">
+      <span id="ptName">Ponto 3</span>
+      <input class="f" id="ptT" type="number" step="0.01" inputmode="decimal"><span>s</span>
+      <input class="f" id="ptV" type="number" step="1" inputmode="decimal"><span>RPM</span>
+    </div>
+  </div>
+  <div class="hint">arraste o ponto · toque duplo adiciona · toque longo remove · interpolação PCHIP (IPP3)</div>
+
+  <div class="card" style="display:flex;flex-direction:column;gap:10px">
+    <div class="row">
+      <div class="field"><span class="lbl">Tempo total descida</span><div class="unit"><input class="f" id="cTtot" type="number" step="0.1" min="0.5" inputmode="decimal"><i>s</i></div></div>
+      <div class="field"><span class="lbl">Rampa partida</span><div class="unit"><input class="f" id="cRamp" type="number" step="0.05" min="0.05" inputmode="decimal"><i>s</i></div></div>
+    </div>
+    <div class="row">
+      <div class="field"><span class="lbl">Vel. subida</span><div class="unit"><input class="f" id="cVsub" type="number" step="5" min="1" inputmode="decimal"><i>RPM</i></div><small>constante</small></div>
+      <div class="field"><span class="lbl">Compensação subida</span><div class="unit"><input class="f" id="cComp" type="number" step="1" inputmode="numeric"><i>passos</i></div><small>folga mecânica</small></div>
+    </div>
+    <div class="row">
+      <div class="field"><span class="lbl">Vel. máx. manual</span><div class="unit"><input class="f" id="cVman" type="number" step="5" min="10" inputmode="decimal"><i>RPM</i></div></div>
+      <div class="field"><span class="lbl">Micropasso TB6600</span>
+        <select class="f" id="cMicro"><option value="1">1 (200 p/v)</option><option value="2">1/2 (400)</option><option value="4">1/4 (800)</option><option value="8">1/8 (1600)</option><option value="16">1/16 (3200)</option><option value="32">1/32 (6400)</option></select></div>
+    </div>
+    <div class="row">
+      <div class="field"><span class="lbl">Aceleração máx.</span><div class="unit"><input class="f" id="cAmax" type="number" step="50" min="50" inputmode="decimal"><i>RPM/s</i></div></div>
+      <div class="field"><span class="lbl">Escala do gráfico</span><div class="unit"><input class="f" id="cVscale" type="number" step="50" min="50" inputmode="decimal"><i>RPM</i></div></div>
+    </div>
+    <div style="font-size:12px;color:var(--mut);padding:2px" id="summary"></div>
+  </div>
+  <div class="row">
+    <button class="btn sec" id="bLinear" style="flex:1;height:48px;font-size:14px">↺ Linear</button>
+    <button class="btn" id="bSend" style="flex:2;height:48px;background:var(--ok);font-size:14px">⇪ Enviar ao ESP32</button>
+  </div>
+</section>
+
+<!-- ═══════════════ CONEXÃO ═══════════════ -->
+<section id="sec-cx">
+  <h2>Conexão Bluetooth</h2>
+  <div id="noBle2" class="warnbox" style="display:none"></div>
+  <div class="card" style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px">
+    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#2fa3ff" stroke-width="1.6"><circle cx="12" cy="12" r="11" stroke="#2e3a47"/><path d="M7 7.5l10 9-5 4.5V3l5 4.5-10 9"/></svg>
+    <div style="font-size:13px;color:var(--mut);text-align:center" id="cxMsg">Toque em procurar e escolha o atuador na lista.</div>
+    <button class="btn" id="bScan" style="width:100%;height:52px;background:var(--acc);font-size:16px">🔍 Procurar dispositivo</button>
+    <button class="btn sec" id="bDisc" style="width:100%;height:44px;font-size:14px;display:none">Desconectar</button>
+  </div>
+
+  <div class="card" id="pinCard" style="display:none;flex-direction:column;gap:10px;border:1px solid rgba(47,163,255,.4)">
+    <div style="font-weight:600">Pareamento · <span id="pinDev"></span></div>
+    <div style="font-size:12px;color:var(--mut)">Digite o PIN de 6 dígitos do equipamento</div>
+    <input class="f" id="pinIn" type="password" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="••••••">
+    <label class="sw" style="font-size:12px;color:var(--mut)"><span>Lembrar PIN neste aparelho</span><input type="checkbox" id="pinRem" checked></label>
+    <button class="btn" id="bPin" style="height:46px;background:var(--acc)">Parear</button>
+  </div>
+
+  <div class="lbl" style="margin-top:4px">Dispositivos pareados</div>
+  <div id="devList" style="display:flex;flex-direction:column;gap:10px"></div>
+
+  <div class="card sw"><div><div style="font-weight:600">Modo demonstração</div><div style="font-size:11px;color:var(--mut)">simula o atuador sem hardware</div></div><button class="tog" id="bDemo"></button></div>
+  <div class="hint" id="verLbl">Android: Chrome/Edge · iPhone: app Bluefy</div>
+</section>
+</main>
+
+<nav>
+  <button class="on" data-sec="op"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M10 8l6 4-6 4z" fill="currentColor"/></svg>Operação</button>
+  <button data-sec="pf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 20h18M4 16c4-1 5-9 8-9s4 6 8 7"/></svg>Perfil</button>
+  <button data-sec="cx"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7l10 10-5 5V2l5 5L7 17"/></svg>Conexão</button>
+</nav>
+<div id="toast"></div>
+
+<script>
+'use strict';
+const APP_REV = 'Rev.01';
+const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
+const NAME_PREFIX = 'ATUADOR';
+const CHUNK = 20;      // bytes por escrita BLE
+const DT_MS = 20;      // passo da tabela enviada (ms)
+const JOG_MS = 100;    // heartbeat do jog
+const BASE_STEPS = 200;// NEMA 1,8°
+
+const $ = id => document.getElementById(id);
+const fmt = (v,d=2) => Number(v).toFixed(d).replace('.',',');
+const fmtInt = v => Math.round(v).toLocaleString('pt-BR');
+const clamp = (v,a,b) => Math.min(b,Math.max(a,v));
+const store = {
+  get(k,d){ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):d; }catch(e){ return d; } },
+  set(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
+};
+let toastT;
+function toast(m){ const t=$('toast'); t.textContent=m; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2600); }
+
+/* ═════════════ PERFIS ═════════════ */
+function linearPts(T,r,v){ const p=[{t:0,v:0},{t:r,v}]; const n=4; for(let i=1;i<=n;i++) p.push({t:+(r+(T-r)*i/n).toFixed(3),v}); return p; }
+function defProfile(){ return { ttot:3, ramp:0.4, vsub:200, comp:40, vman:300, micro:8, amax:1500, vscale:300, pts:linearPts(3,0.4,150) }; }
+let profiles = store.get('atl_profiles', null) || { A:defProfile(), B:defProfile(), C:defProfile() };
+let cur = store.get('atl_cur','A'); if(!profiles[cur]) cur=Object.keys(profiles)[0];
+let sentSig = store.get('atl_sent','');
+const P = () => profiles[cur];
+function save(){ store.set('atl_profiles',profiles); store.set('atl_cur',cur); updateDirty(); }
+
+/* PCHIP (Fritsch–Carlson) — mesmo modelo do IPP3 */
+function pchip(pts){
+  const xs=pts.map(p=>p.t), ys=pts.map(p=>p.v), n=xs.length, h=[], d=[], m=new Array(n);
+  for(let i=0;i<n-1;i++){ h[i]=xs[i+1]-xs[i]; d[i]=(ys[i+1]-ys[i])/h[i]; }
+  if(n===2){ m[0]=m[1]=d[0]; }
+  else{
+    m[0]=((2*h[0]+h[1])*d[0]-h[0]*d[1])/(h[0]+h[1]);
+    if(Math.sign(m[0])!==Math.sign(d[0])) m[0]=0; else if(Math.sign(d[0])!==Math.sign(d[1])&&Math.abs(m[0])>Math.abs(3*d[0])) m[0]=3*d[0];
+    const k=n-1; m[k]=((2*h[k-1]+h[k-2])*d[k-1]-h[k-1]*d[k-2])/(h[k-1]+h[k-2]);
+    if(Math.sign(m[k])!==Math.sign(d[k-1])) m[k]=0; else if(Math.sign(d[k-1])!==Math.sign(d[k-2])&&Math.abs(m[k])>Math.abs(3*d[k-1])) m[k]=3*d[k-1];
+    for(let i=1;i<n-1;i++){ if(d[i-1]*d[i]<=0) m[i]=0; else { const w1=2*h[i]+h[i-1], w2=h[i]+2*h[i-1]; m[i]=(w1+w2)/(w1/d[i-1]+w2/d[i]); } }
+  }
+  return x=>{ if(x<=xs[0]) return ys[0]; if(x>=xs[n-1]) return ys[n-1];
+    let i=0; while(i<n-2 && x>xs[i+1]) i++;
+    const t=(x-xs[i])/h[i], t2=t*t, t3=t2*t;
+    return (2*t3-3*t2+1)*ys[i]+(t3-2*t2+t)*h[i]*m[i]+(-2*t3+3*t2)*ys[i+1]+(t3-t2)*h[i]*m[i+1]; };
+}
+function table(p=P()){ const f=pchip(p.pts), n=Math.round(p.ttot*1000/DT_MS)+1, v=[]; for(let i=0;i<n;i++) v.push(Math.max(0,f(i*DT_MS/1000))); return v; }
+function spr(p=P()){ return BASE_STEPS*p.micro; }
+function descSteps(p=P()){ const v=table(p), dt=DT_MS/1000; let s=0; for(let i=0;i<v.length-1;i++) s+=(v[i]+v[i+1])/2/60*dt; return s*spr(p); }
+function upTime(p=P()){
+  const steps=descSteps(p)+p.comp, rev=Math.max(0,steps)/spr(p), v=p.vsub/60, a=p.amax/60;
+  const dAcc=v*v/a; // aceleração + desaceleração
+  return rev>=dAcc ? 2*v/a+(rev-dAcc)/v : 2*Math.sqrt(rev/a);
+}
+function sig(p=P()){ return JSON.stringify([p.ttot,p.ramp,p.vsub,p.comp,p.vman,p.micro,p.amax,p.pts]); }
+
+/* ═════════════ GRÁFICO ═════════════ */
+const svg=$('chart'); let sel=3, CH={W:340,H:240,L:40,R:12,T:12,B:30};
+const cx=t=>CH.L+(t/P().ttot)*(CH.W-CH.L-CH.R), cy=v=>CH.H-CH.B-(v/P().vscale)*(CH.H-CH.T-CH.B);
+const ct=x=>(x-CH.L)/(CH.W-CH.L-CH.R)*P().ttot, cv=y=>(CH.H-CH.B-y)/(CH.H-CH.T-CH.B)*P().vscale;
+let nowT=-1;
+function drawChart(){
+  const p=P(); CH.W=svg.clientWidth||340; svg.setAttribute('viewBox',`0 0 ${CH.W} ${CH.H}`);
+  const f=pchip(p.pts); let s='';
+  s+=`<rect x="${cx(0)}" y="${CH.T}" width="${cx(p.ramp)-cx(0)}" height="${CH.H-CH.T-CH.B}" fill="rgba(245,166,35,.15)"/>`;
+  s+=`<line x1="${cx(p.ramp)}" y1="${CH.T}" x2="${cx(p.ramp)}" y2="${CH.H-CH.B}" stroke="#f5a623" stroke-dasharray="4 3"/>`;
+  s+=`<text x="${(cx(0)+cx(p.ramp))/2}" y="${CH.T+12}" fill="#f5a623" font-size="9" text-anchor="middle" font-weight="700">RAMPA</text>`;
+  const vs=p.vscale, vStep=vs<=150?25:vs<=400?50:vs<=1000?100:200;
+  for(let v=0;v<=vs+1e-6;v+=vStep) s+=`<line x1="${CH.L}" x2="${CH.W-CH.R}" y1="${cy(v)}" y2="${cy(v)}" stroke="#2e3a47" stroke-width="${v?0.6:1}"/><text x="${CH.L-6}" y="${cy(v)+3}" fill="#8b98a5" font-size="9" text-anchor="end">${v}</text>`;
+  const T=p.ttot, tStep=T<=2?0.25:T<=5?0.5:T<=12?1:T<=30?2:5;
+  for(let t=0;t<=T+1e-6;t+=tStep) s+=`<line y1="${CH.T}" y2="${CH.H-CH.B}" x1="${cx(t)}" x2="${cx(t)}" stroke="#2e3a47" stroke-width=".6"/><text x="${cx(t)}" y="${CH.H-CH.B+13}" fill="#8b98a5" font-size="9" text-anchor="middle">${fmt(t,t%1?(tStep<0.5?2:1):0)}</text>`;
+  s+=`<text x="${(CH.L+CH.W-CH.R)/2}" y="${CH.H-3}" fill="#8b98a5" font-size="9.5" text-anchor="middle">tempo (s)</text>`;
+  s+=`<text x="10" y="${(CH.T+CH.H-CH.B)/2}" fill="#8b98a5" font-size="9.5" text-anchor="middle" transform="rotate(-90 10 ${(CH.T+CH.H-CH.B)/2})">velocidade (RPM)</text>`;
+  // curva
+  const N=Math.max(60,Math.round(CH.W/2)); let path='', area=`M${cx(0)} ${cy(0)}`, red='', anyRed=false;
+  let pv=f(0), pt=0;
+  for(let i=0;i<=N;i++){ const t=T*i/N, v=Math.max(0,f(t)), X=cx(t).toFixed(1), Y=cy(clamp(v,0,vs*1.05)).toFixed(1);
+    path+=(i?'L':'M')+X+' '+Y; area+=`L${X} ${Y}`;
+    if(i){ const acc=Math.abs(v-pv)/(t-pt); if(acc>p.amax){ red+=`M${cx(pt).toFixed(1)} ${cy(clamp(pv,0,vs*1.05)).toFixed(1)}L${X} ${Y}`; anyRed=true; } }
+    pv=v; pt=t; }
+  area+=`L${cx(T)} ${cy(0)}Z`;
+  s+=`<path d="${area}" fill="rgba(47,163,255,.12)"/><path d="${path}" fill="none" stroke="#2fa3ff" stroke-width="2.5" stroke-linejoin="round"/>`;
+  if(red) s+=`<path d="${red}" fill="none" stroke="#e5484d" stroke-width="3.5" stroke-linecap="round"/>`;
+  $('accWarn').style.display=anyRed?'inline':'none';
+  if(nowT>=0 && nowT<=T) s+=`<line x1="${cx(nowT)}" y1="${CH.T}" x2="${cx(nowT)}" y2="${CH.H-CH.B}" stroke="#2ecc71" stroke-width="1.4"/><text x="${cx(nowT)+3}" y="${CH.T+10}" fill="#2ecc71" font-size="8.5">agora</text>`;
+  p.pts.forEach((q,i)=>{ const X=cx(q.t), Y=cy(q.v), isR=i<=1, isSel=i===sel;
+    if(isSel) s+=`<circle cx="${X}" cy="${Y}" r="15" fill="rgba(47,163,255,.25)"/><line x1="${X}" y1="${Y}" x2="${X}" y2="${CH.H-CH.B}" stroke="#2fa3ff" stroke-dasharray="2 2"/>`;
+    s+=`<circle cx="${X}" cy="${Y}" r="${isSel?7.5:6}" fill="${isR?'#f5a623':'#0f1419'}" stroke="${isR?'#f5a623':'#2fa3ff'}" stroke-width="2.5"/>`; });
+  svg.innerHTML=s;
+  $('rampLbl').textContent=fmt(p.ramp);
+  updPtEdit();
+}
+function updPtEdit(){
+  const p=P(); if(sel>=p.pts.length) sel=p.pts.length-1; const q=p.pts[sel];
+  $('ptName').textContent = sel===0?'Partida':sel===1?'Fim da rampa':sel===p.pts.length-1?'Ponto final':`Ponto ${sel+1}`;
+  const tI=$('ptT'), vI=$('ptV');
+  if(document.activeElement!==tI) tI.value=q.t.toFixed(2);
+  if(document.activeElement!==vI) vI.value=Math.round(q.v);
+  tI.disabled = sel<=1 || sel===p.pts.length-1; vI.disabled = sel===0;
+}
+function setPoint(i,t,v){
+  const p=P(), pts=p.pts, last=pts.length-1;
+  if(i===0) return;
+  pts[i].v=+clamp(v,0,p.vscale).toFixed(1);
+  if(i>1 && i<last){ const lo=pts[i-1].t+0.02, hi=pts[i+1].t-0.02; pts[i].t=+clamp(t,lo,hi).toFixed(3); }
+}
+// interação (arrastar · toque duplo adiciona · toque longo remove)
+let drag=-1, lpT=null, downXY=null, lastTap={t:0,x:0,y:0};
+function evXY(e){ const r=svg.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; }
+function nearest(x,y){ let bi=-1, bd=1e9; P().pts.forEach((q,i)=>{ const d=Math.hypot(cx(q.t)-x,cy(q.v)-y); if(d<bd){bd=d;bi=i;} }); return bd<26?bi:-1; }
+svg.addEventListener('pointerdown',e=>{
+  const {x,y}=evXY(e); const i=nearest(x,y); downXY={x,y};
+  const now=performance.now();
+  if(i<0 && now-lastTap.t<320 && Math.hypot(x-lastTap.x,y-lastTap.y)<30){ addPoint(ct(x),cv(y)); lastTap.t=0; return; }
+  lastTap={t:now,x,y};
+  if(i>=0){ sel=i; drag=i; svg.setPointerCapture(e.pointerId);
+    clearTimeout(lpT); lpT=setTimeout(()=>{ if(drag===i){ removePoint(i); drag=-1; } },600); drawChart(); }
+});
+svg.addEventListener('pointermove',e=>{
+  if(drag<0) return; const {x,y}=evXY(e);
+  if(downXY && Math.hypot(x-downXY.x,y-downXY.y)>6){ clearTimeout(lpT); downXY=null; }
+  if(downXY) return;
+  setPoint(drag,ct(x),cv(y)); drawChart(); updSummary();
+});
+const endDrag=()=>{ clearTimeout(lpT); if(drag>=0){ drag=-1; save(); updSummary(); } };
+svg.addEventListener('pointerup',endDrag); svg.addEventListener('pointercancel',endDrag);
+svg.addEventListener('contextmenu',e=>e.preventDefault());
+function addPoint(t,v){
+  const p=P(), pts=p.pts;
+  if(t<=p.ramp+0.03 || t>=p.ttot-0.03){ toast('Adicione pontos depois da rampa'); return; }
+  let k=pts.findIndex(q=>q.t>t); if(k<0) return;
+  if(t-pts[k-1].t<0.03 || pts[k].t-t<0.03) return;
+  pts.splice(k,0,{t:+t.toFixed(3),v:+clamp(v,0,p.vscale).toFixed(1)}); sel=k; save(); drawChart(); updSummary(); toast('Ponto adicionado');
+}
+function removePoint(i){
+  const p=P(); if(i<=1 || i===p.pts.length-1){ toast('Este ponto não pode ser removido'); return; }
+  p.pts.splice(i,1); sel=Math.min(i,p.pts.length-1); if(navigator.vibrate) navigator.vibrate(30);
+  save(); drawChart(); updSummary(); toast('Ponto removido');
+}
+['ptT','ptV'].forEach(id=>$(id).addEventListener('change',()=>{
+  const q=P().pts[sel]; setPoint(sel, parseFloat($('ptT').value)||q.t, parseFloat($('ptV').value)||0); save(); drawChart(); updSummary();
+}));
+
+/* ═════════════ CAMPOS ═════════════ */
+const FIELDS={cTtot:'ttot',cRamp:'ramp',cVsub:'vsub',cComp:'comp',cVman:'vman',cMicro:'micro',cAmax:'amax',cVscale:'vscale'};
+function loadFields(){ const p=P(); for(const id in FIELDS) $(id).value=p[FIELDS[id]]; }
+function rescaleTime(oldT,oldR,newT,newR){
+  const pts=P().pts, last=pts.length-1;
+  pts[1].t=newR; pts[last].t=newT;
+  for(let i=2;i<last;i++) pts[i].t=+(newR+(pts[i].t-oldR)*(newT-newR)/(oldT-oldR)).toFixed(3);
+}
+for(const id in FIELDS) $(id).addEventListener('change',()=>{
+  const p=P(), k=FIELDS[id]; let v=parseFloat($(id).value);
+  if(isNaN(v)){ loadFields(); return; }
+  if(k==='ttot'){ v=clamp(v,Math.max(0.5,p.ramp+0.2),120); rescaleTime(p.ttot,p.ramp,v,p.ramp); }
+  if(k==='ramp'){ v=clamp(v,0.05,p.ttot-0.2); rescaleTime(p.ttot,p.ramp,p.ttot,v); }
+  if(k==='vsub') v=clamp(v,1,3000);
+  if(k==='comp') v=Math.round(clamp(v,-100000,100000));
+  if(k==='vman') v=clamp(v,10,3000);
+  if(k==='amax') v=clamp(v,10,100000);
+  if(k==='vscale'){ v=clamp(v,50,5000); p.pts.forEach(q=>q.v=Math.min(q.v,v)); }
+  p[k]=v; loadFields(); save(); drawChart(); updSummary(); updTimeLbl();
+});
+function updSummary(){
+  const p=P(), st=descSteps(p);
+  $('summary').innerHTML=`Curso: <b style="color:var(--tx)">${fmtInt(st)} passos · ${fmt(st/spr(p))} voltas</b> · subida ≈ <b style="color:var(--tx)">${fmt(upTime(p),1)} s</b>`;
+}
+function renderPresets(){
+  const c=$('presets'); c.innerHTML='';
+  Object.keys(profiles).forEach(k=>{ const b=document.createElement('button'); b.className='chip'+(k===cur?' on':''); b.textContent=k;
+    b.onclick=()=>{ cur=k; sel=Math.min(sel,P().pts.length-1); save(); refreshAll(); };
+    let lp; b.addEventListener('pointerdown',()=>{ lp=setTimeout(()=>{ if(Object.keys(profiles).length>1 && confirm(`Excluir perfil ${k}?`)){ delete profiles[k]; if(cur===k) cur=Object.keys(profiles)[0]; save(); refreshAll(); } },700); });
+    b.addEventListener('pointerup',()=>clearTimeout(lp)); b.addEventListener('pointerleave',()=>clearTimeout(lp));
+    c.appendChild(b); });
+  if(Object.keys(profiles).length<8){ const a=document.createElement('button'); a.className='chip'; a.textContent='+';
+    a.onclick=()=>{ const n='ABCDEFGH'.split('').find(l=>!profiles[l]); profiles[n]=JSON.parse(JSON.stringify(P())); cur=n; save(); refreshAll(); toast(`Perfil ${n} criado (cópia)`); };
+    c.appendChild(a); }
+}
+$('bLinear').onclick=()=>{ const p=P(); p.pts=linearPts(p.ttot,p.ramp,Math.round(p.pts[1].v||150)); sel=1; save(); drawChart(); updSummary(); toast('Curva linear restaurada'); };
+
+/* ═════════════ BLE ═════════════ */
+let dev=null, rxC=null, txC=null, connected=false, authed=false, demo=false, rxBuf='', wq=Promise.resolve(), wPending=0, fwVer='';
+const hasBle = !!(navigator.bluetooth);
+function bleMsg(){
+  const ios=/iPhone|iPad|iPod/.test(navigator.userAgent);
+  return ios ? 'No iPhone o Safari não tem Bluetooth para páginas web. Abra este link no app <b>Bluefy</b> (gratuito na App Store).'
+             : 'Este navegador não suporta Web Bluetooth. Use Chrome ou Edge (Android/PC). Ative o modo demonstração para testar.';
+}
+if(!hasBle){ ['noBle','noBle2'].forEach(id=>{ $(id).innerHTML=bleMsg(); $(id).style.display='block'; }); }
+
+function send(line){
+  if(demo){ simCmd(line); return Promise.resolve(); }
+  if(!connected||!rxC) return Promise.reject(new Error('desconectado'));
+  const data=new TextEncoder().encode(line+'\n'); wPending++;
+  wq=wq.then(async()=>{ for(let i=0;i<data.length;i+=CHUNK){ const c=data.slice(i,i+CHUNK);
+      if(rxC.writeValueWithResponse) await rxC.writeValueWithResponse(c); else await rxC.writeValue(c); } })
+    .catch(e=>{ console.warn('BLE write',e); }).finally(()=>wPending--);
+  return wq;
+}
+function onNotify(e){
+  rxBuf+=new TextDecoder().decode(e.target.value);
+  let k; while((k=rxBuf.indexOf('\n'))>=0){ const l=rxBuf.slice(0,k).trim(); rxBuf=rxBuf.slice(k+1); if(l) handleLine(l); }
+  if(rxBuf.length>512) rxBuf='';
+}
+let pinResolve=null, ackWait={};
+function handleLine(l){
+  const a=l.split(',');
+  switch(a[0]){
+    case 'S': onStatus(+a[1],+a[2]/10,+a[3],+a[4],+a[5]); break;
+    case 'PIN': if(a[1]==='OK'){ authed=true; onAuthed(); } else { authed=false; toast('PIN incorreto'); showPin(true); forgetPin(); } break;
+    case 'ACK': if(ackWait[a[1]]) { ackWait[a[1]](true); delete ackWait[a[1]]; } break;
+    case 'ERR': if(ackWait[a[1]]) { ackWait[a[1]](false); delete ackWait[a[1]]; } toast('Erro do equipamento: '+a.slice(1).join(',')); break;
+    case 'VER': fwVer=a[1]||''; updHeader(); break;
+  }
+}
+function waitAck(tag,ms=4000){ return new Promise(res=>{ ackWait[tag]=res; setTimeout(()=>{ if(ackWait[tag]){ delete ackWait[tag]; res(null); } },ms); }); }
+
+function knownDevs(){ return store.get('atl_devs',[]); }
+function rememberDev(name){ const l=knownDevs().filter(d=>d.name!==name); l.unshift({name,last:Date.now()}); store.set('atl_devs',l.slice(0,6)); renderDevs(); }
+function getPin(name){ return store.get('atl_pins',{})[name]; }
+function savePin(name,pin){ const m=store.get('atl_pins',{}); m[name]=pin; store.set('atl_pins',m); }
+function forgetPin(){ if(!dev) return; const m=store.get('atl_pins',{}); delete m[dev.name]; store.set('atl_pins',m); }
+
+async function connectTo(name){
+  if(!hasBle){ toast('Bluetooth indisponível neste navegador'); return; }
+  if(demo) setDemo(false);
+  try{
+    let d=null;
+    if(name && navigator.bluetooth.getDevices){ try{ const l=await navigator.bluetooth.getDevices(); d=l.find(x=>x.name===name)||null; }catch(e){} }
+    if(!d){
+      const filters = name ? [{name}] : [{namePrefix:NAME_PREFIX},{services:[NUS.svc]}];
+      d=await navigator.bluetooth.requestDevice({filters, optionalServices:[NUS.svc]});
+    }
+    dev=d; $('cxMsg').textContent='Conectando a '+(dev.name||'dispositivo')+'…';
+    dev.addEventListener('gattserverdisconnected',onDisconnect);
+    const srv=await dev.gatt.connect();
+    const s=await srv.getPrimaryService(NUS.svc);
+    rxC=await s.getCharacteristic(NUS.rx); txC=await s.getCharacteristic(NUS.tx);
+    await txC.startNotifications(); txC.addEventListener('characteristicvaluechanged',onNotify);
+    connected=true; authed=false; rxBuf=''; wq=Promise.resolve();
+    rememberDev(dev.name||'ATUADOR'); updHeader();
+    const pin=getPin(dev.name);
+    if(pin){ sendPin(pin,false); } else showPin(true);
+  }catch(e){
+    if(e && e.name==='NotFoundError'){ $('cxMsg').textContent='Nenhum dispositivo selecionado.'; return; }
+    console.warn(e); toast('Falha ao conectar: '+(e.message||e)); $('cxMsg').textContent='Não foi possível conectar.'; cleanupBle();
+  }
+}
+function sendPin(pin,remember){
+  if(remember && dev) savePin(dev.name,pin);
+  send('PIN,'+pin);
+  setTimeout(()=>{ if(connected && !authed && !demo) { toast('Sem resposta ao PIN'); showPin(true); } },4000);
+}
+function showPin(v){ $('pinCard').style.display=v?'flex':'none'; if(v){ $('pinDev').textContent=dev?dev.name:''; $('pinIn').value=''; nav('cx'); } }
+$('bPin').onclick=()=>{ const v=$('pinIn').value.replace(/\D/g,''); if(v.length!==6){ toast('O PIN tem 6 dígitos'); return; } sendPin(v,$('pinRem').checked); };
+function onAuthed(){ showPin(false); updHeader(); toast('Conectado ✓'); $('cxMsg').textContent='Conectado a '+(dev?dev.name:''); if(!demo) nav('op'); }
+function onDisconnect(){ const was=connected; cleanupBle(); if(was) toast('Conexão perdida — motor parado pelo watchdog'); }
+function cleanupBle(){ connected=false; authed=false; rxC=txC=null; jogStop(); updHeader(); onStatus(0,0,lastSt.pos,0,0); }
+$('bScan').onclick=()=>connectTo(null);
+$('bDisc').onclick=()=>{ if(demo){ setDemo(false); return; } try{ send('STOP'); }catch(e){} setTimeout(()=>{ if(dev&&dev.gatt.connected) dev.gatt.disconnect(); },150); };
+function renderDevs(){
+  const c=$('devList'); c.innerHTML=''; const l=knownDevs();
+  if(!l.length){ c.innerHTML='<div class="hint" style="text-align:left">Nenhum ainda. Os dispositivos conectados aparecem aqui.</div>'; return; }
+  l.forEach(d=>{ const el=document.createElement('div'); el.className='card dev';
+    const isCur=connected && dev && dev.name===d.name;
+    el.innerHTML=`<div><div class="n">${d.name}</div><div class="d">${isCur?'conectado'+(fwVer?' · fw '+fwVer:''):'último uso '+new Date(d.last).toLocaleDateString('pt-BR')}</div></div>`;
+    const b=document.createElement('button'); b.className='btn sec'; b.style.cssText='height:36px;padding:0 14px;font-size:13px'; b.textContent=isCur?'✓':'Conectar'; b.disabled=isCur;
+    b.onclick=()=>connectTo(d.name); el.appendChild(b); c.appendChild(el); });
+}
+function online(){ return demo || (connected && authed); }
+function updHeader(){
+  const d=$('hdDot'); d.className='dot'+(demo?' demo':online()?' on':'');
+  $('hdTxt').textContent = demo?'DEMO · simulação' : connected ? (dev.name+(authed?' · conectado':' · aguardando PIN')) : 'desconectado';
+  $('bDisc').style.display=(connected||demo)?'flex':'none';
+  $('bScan').style.display=(connected||demo)?'none':'flex';
+  if(!connected&&!demo) $('cxMsg').textContent='Toque em procurar e escolha o atuador na lista.';
+  ['bAuto','bUp','bDn'].forEach(id=>$(id).disabled=!online());
+  $('bSend').disabled=!online();
+  if(!hasBle) $('noBle').style.display=demo?'none':'block';
+  renderDevs(); updateDirty();
+}
+
+/* ═════════════ ENVIO DO PERFIL ═════════════ */
+async function sendProfile(){
+  if(!online()){ toast('Conecte primeiro'); return false; }
+  const p=P(), v=table(p).map(x=>Math.round(x*10)); const sum=v.reduce((a,b)=>a+b,0)%65536;
+  $('bSend').disabled=true; $('bSend').textContent='Enviando…';
+  try{
+    const cfgAck=waitAck('CFG');
+    await send(`CFG,${p.micro},${Math.round(p.vsub*10)},${p.comp},${Math.round(p.vman*10)},${Math.round(p.ramp*1000)},${Math.round(p.amax)},${Math.round(p.ttot*1000)}`);
+    const r1=await cfgAck;
+    const prfAck=waitAck('PRF',8000);
+    await send(`PRF,${DT_MS},${v.length},${sum},${v.join(',')}`);
+    const r2=await prfAck;
+    if(r1===false||r2===false){ toast('Equipamento recusou o perfil'); return false; }
+    if(r1===null||r2===null){ toast('Sem confirmação do equipamento'); return false; }
+    sentSig=sig(p)+'|'+cur; store.set('atl_sent',sentSig); stroke=descSteps(p); updateDirty(); toast(`Perfil ${cur} enviado ✓ (${v.length} pontos)`); return true;
+  }finally{ $('bSend').disabled=!online(); $('bSend').textContent='⇪ Enviar ao ESP32'; }
+}
+$('bSend').onclick=sendProfile;
+function isDirty(){ return sentSig!==sig()+'|'+cur; }
+function updateDirty(){ $('dirtyWarn').style.display = online()&&isDirty() ? 'block':'none'; }
+
+/* ═════════════ OPERAÇÃO ═════════════ */
+const ST_NAME=['PARADO','▼ DESCENDO','▲ SUBINDO','▲ MANUAL','▼ MANUAL','EMERGÊNCIA'];
+let lastSt={st:0,rpm:0,pos:0,t:0,fc:0}, stroke=descSteps(), rotA=0, rotLast=performance.now();
+function onStatus(st,rpm,pos,tms,fc){
+  lastSt={st,rpm,pos,t:tms,fc};
+  const chip=$('stChip'); chip.textContent=ST_NAME[st]||'—'+(st===1?'':'');
+  if(st===1) chip.textContent='▼ DESCENDO · Perfil '+cur;
+  chip.className='chip'+(st>=1&&st<=4?' on':''); chip.style.background=st===5?'rgba(229,72,77,.2)':''; chip.style.color=st===5?'#ff8f92':'';
+  $('vRpm').textContent=Math.round(rpm); $('svRpm').textContent=Math.round(rpm)+' RPM';
+  $('vPos').textContent=fmtInt(pos);
+  const frac=clamp(stroke>0?pos/stroke:0,0,1.15);
+  $('svPct').textContent=Math.round(Math.max(0,pos/Math.max(stroke,1))*100)+'%';
+  const ext=Math.max(0,Math.min(frac,1))*80;
+  $('svRod').setAttribute('height',4+ext); $('svCap').setAttribute('y',148+ext); $('svBar').setAttribute('y2',152+ext);
+  const ar=$('svArrow'); ar.setAttribute('opacity',rpm>0.5?1:0);
+  ar.setAttribute('transform',(st===2||st===3)?'rotate(180 232 180)':'');
+  const T=P().ttot, tt=tms/1000;
+  $('vT').textContent=fmt(tt)+' s'; $('tNow').textContent='t = '+fmt(tt)+' s';
+  $('tBar').style.width=(st===1?clamp(tt/T,0,1)*100:st===2?100:0)+'%';
+  $('vFc').textContent=(fc&1)?'TOPO':(fc&2)?'FUNDO':'OK'; $('vFc').style.color=(fc&3)?'var(--warn)':'var(--ok)';
+  const nt = st===1 ? tt : -1; if(nt!==nowT){ nowT=nt; if(curSec==='pf') drawChart(); }
+  const ba=$('bAuto');
+  if(st===1||st===2){ ba.innerHTML='■&nbsp; PARAR CICLO'; ba.style.background='linear-gradient(180deg,#f5a623,#d4881a)'; }
+  else { ba.innerHTML='▶&nbsp; CICLO AUTOMÁTICO'; ba.style.background='linear-gradient(180deg,#2fa3ff,#1a7fd4)'; }
+  const be=$('bEstop');
+  if(st===5){ be.innerHTML='↻&nbsp; REARMAR'; be.style.background='#8a2a2d'; } else { be.innerHTML='■&nbsp; PARADA DE EMERGÊNCIA'; be.style.background='var(--red)'; }
+}
+function updTimeLbl(){ $('tTot').textContent='total '+fmt(P().ttot)+' s'; }
+// rotação do motor (visual)
+(function spin(now){ const dt=(now-rotLast)/1000; rotLast=now;
+  const dir=(lastSt.st===2||lastSt.st===3)?-1:1; rotA=(rotA+dir*lastSt.rpm/60*360*dt*0.25)%360; // 1/4 da rotação real p/ legibilidade
+  $('rotor').setAttribute('transform',`rotate(${rotA.toFixed(1)} 160 34)`); requestAnimationFrame(spin); })(performance.now());
+
+$('bAuto').onclick=async()=>{
+  if(lastSt.st===1||lastSt.st===2){ send('STOP'); return; }
+  if(lastSt.st===5){ toast('Rearme a emergência primeiro'); return; }
+  if(isDirty()){ const ok=await sendProfile(); if(!ok) return; }
+  stroke=descSteps(); send('AUTO');
+};
+$('bEstop').onclick=()=>{
+  if(lastSt.st===5){ send('RESET'); return; }
+  jogStop(); send('ESTOP'); if(navigator.vibrate) navigator.vibrate([60,40,60]);
+};
+// JOG — quanto mais tempo pressionado, mais rápido (curva quadrática até a vel. máx. em 3 s)
+let jogDir=0, jogT0=0, jogIv=null, jogBtn=null;
+const JOG_VMIN=10, JOG_TFULL=3;
+function jogRpm(){ const s=(performance.now()-jogT0)/1000, k=clamp(s/JOG_TFULL,0,1); return JOG_VMIN+(P().vman-JOG_VMIN)*k*k; }
+function jogStart(btn){
+  if(!online()||jogDir) return; if(lastSt.st===5){ toast('Rearme a emergência primeiro'); return; }
+  if(lastSt.st===1||lastSt.st===2){ toast('Pare o ciclo automático primeiro'); return; }
+  jogBtn=btn; jogDir=+btn.dataset.dir; jogT0=performance.now(); btn.classList.add('act');
+  const tick=()=>{ const r=jogRpm(); if(wPending<2) send(`JOG,${jogDir},${Math.round(r*10)}`);
+    (jogDir>0?$('upLbl'):$('dnLbl')).textContent=Math.round(r)+' RPM'; };
+  tick(); jogIv=setInterval(tick,JOG_MS);
+}
+function jogStop(){
+  if(!jogDir) return; clearInterval(jogIv); jogIv=null; jogDir=0;
+  if(jogBtn) jogBtn.classList.remove('act'); jogBtn=null;
+  $('upLbl').textContent=$('dnLbl').textContent='segure p/ acelerar';
+  if(online()) send('JOG,0,0');
+}
+['bUp','bDn'].forEach(id=>{ const b=$(id);
+  b.addEventListener('pointerdown',e=>{ e.preventDefault(); b.setPointerCapture(e.pointerId); jogStart(b); });
+  ['pointerup','pointercancel','lostpointercapture'].forEach(ev=>b.addEventListener(ev,jogStop));
+  b.addEventListener('contextmenu',e=>e.preventDefault()); });
+document.addEventListener('visibilitychange',()=>{ if(document.hidden) jogStop(); });
+window.addEventListener('blur',jogStop);
+
+/* ═════════════ MODO DEMO (simulação) ═════════════ */
+const sim={st:0,pos:0,rpm:0,t:0,tab:null,dt:DT_MS,upTarget:0,jog:{dir:0,rpm:0,last:0},cfg:null,iv:null};
+function setDemo(on){
+  if(on && connected){ $('bDisc').click(); }
+  demo=on; $('bDemo').classList.toggle('on',on);
+  if(on){ authed=true; sim.st=0; sim.rpm=0; sim.iv=setInterval(simTick,DT_MS); toast('Modo demonstração ativo'); }
+  else { authed=false; clearInterval(sim.iv); sim.iv=null; onStatus(0,0,0,0,0); }
+  updHeader();
+}
+$('bDemo').onclick=()=>setDemo(!demo);
+function simCmd(line){
+  const a=line.split(','); const p=P();
+  switch(a[0]){
+    case 'CFG': sim.cfg={micro:+a[1],vsub:+a[2]/10,comp:+a[3],vman:+a[4]/10,amax:+a[6]}; setTimeout(()=>handleLine('ACK,CFG'),60); break;
+    case 'PRF': { const v=a.slice(4).map(Number); const sum=v.reduce((x,y)=>x+y,0)%65536;
+      if(v.length!==+a[2]||sum!==+a[3]){ setTimeout(()=>handleLine('ERR,PRF'),60); break; }
+      sim.dt=+a[1]; sim.tab=v.map(x=>x/10); setTimeout(()=>handleLine('ACK,PRF'),120); break; }
+    case 'AUTO': if(sim.st===5||!sim.tab) break; sim.st=1; sim.t=0; sim.pos=0; break;
+    case 'STOP': if(sim.st===1||sim.st===2){ sim.st=0; } break;
+    case 'ESTOP': sim.st=5; sim.rpm=0; break;
+    case 'RESET': if(sim.st===5) sim.st=0; break;
+    case 'JOG': { const d=+a[1]; if(sim.st===5) break; sim.jog={dir:d,rpm:+a[2]/10,last:performance.now()}; if(d) sim.st=d>0?3:4; break; }
+  }
+}
+function simTick(){
+  const dt=DT_MS/1000, c=sim.cfg||{micro:P().micro,vsub:P().vsub,comp:P().comp,amax:P().amax}, sp=BASE_STEPS*c.micro, a=c.amax;
+  const toward=(tgt)=>{ const d=tgt-sim.rpm, m=a*dt; sim.rpm+= Math.abs(d)<=m?d:Math.sign(d)*m; };
+  const maxPos=Math.max(stroke,1)*1.1;
+  if(sim.st===1){ // descida pela tabela
+    sim.t+=dt; const i=sim.t*1000/sim.dt, i0=Math.floor(i);
+    if(i0>=sim.tab.length-1){ sim.st=2; sim.rpm=0; sim.upTarget=-(c.comp); }
+    else{ const f=i-i0; sim.rpm=sim.tab[i0]*(1-f)+sim.tab[i0+1]*f; sim.pos+=sim.rpm/60*sp*dt; }
+  } else if(sim.st===2){ // subida constante com rampa
+    const rem=(sim.pos-sim.upTarget)/sp; const vAllow=Math.sqrt(Math.max(0,2*(a/60)*rem))*60;
+    toward(Math.min(c.vsub,vAllow)); if(sim.rpm<2&&rem>0) sim.rpm=2;
+    sim.pos-=sim.rpm/60*sp*dt;
+    if(sim.pos<=sim.upTarget){ sim.pos=0; sim.rpm=0; sim.st=0; sim.t=0; }
+  } else if(sim.st===3||sim.st===4){
+    const wd=performance.now()-sim.jog.last>300;
+    const tgt=(wd||!sim.jog.dir)?0:sim.jog.rpm; toward(tgt);
+    sim.pos+=(sim.st===4?1:-1)*sim.rpm/60*sp*dt;
+    if(sim.pos<0){ sim.pos=0; sim.rpm=0; } if(sim.pos>maxPos){ sim.pos=maxPos; sim.rpm=0; }
+    if(sim.rpm<=0.01 && (wd||!sim.jog.dir)){ sim.rpm=0; sim.st=0; }
+  } else if(sim.st===0){ toward(0); }
+  const fc=(sim.pos<=0.5?1:0)|(sim.pos>=maxPos-0.5?2:0);
+  handleLine(`S,${sim.st},${Math.round(sim.rpm*10)},${Math.round(sim.pos)},${Math.round(sim.st===1?sim.t*1000:0)},${fc}`);
+}
+
+/* ═════════════ NAVEGAÇÃO ═════════════ */
+let curSec='op';
+function nav(s){ curSec=s; document.querySelectorAll('section').forEach(e=>e.classList.toggle('on',e.id==='sec-'+s));
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.sec===s));
+  if(s==='pf') requestAnimationFrame(drawChart); }
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>nav(b.dataset.sec));
+window.addEventListener('resize',()=>{ if(curSec==='pf') drawChart(); });
+
+function refreshAll(){ renderPresets(); loadFields(); drawChart(); updSummary(); updTimeLbl(); updateDirty(); if(!online()||lastSt.st===0) { stroke=descSteps(); } }
+$('verLbl').textContent='Android: Chrome/Edge · iPhone: app Bluefy · App '+APP_REV;
+refreshAll(); updHeader(); onStatus(0,0,0,0,0);
+</script>
+</body>
+</html>
