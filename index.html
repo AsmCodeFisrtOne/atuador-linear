@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   ATUADOR LINEAR · App de controle BLE (motor de passo NEMA + TB6600 + ESP32-S3)
-  Arquivo: index.html  ·  App Rev.09  ·  2026-10-16
+  Arquivo: index.html  ·  App Rev.10  ·  2026-10-16
   ─────────────────────────────────────────────────────────────────────────────
   CHANGELOG
    Rev.01 – Primeira versão: telas Operação / Perfil / Conexão, curva PCHIP (IPP3)
@@ -24,6 +24,8 @@
             (escala as velocidades); aplicado automaticamente ao definir o FUNDO.
    Rev.08 – Botão do Manual de uso (manual.pdf) no topo e na aba Conexão.
    Rev.09 – Nome do produto alterado para "Ensaios e Calibrações" (negrito).
+   Rev.10 – Ajuste dos botões: largura total na aba Conexão em telas largas,
+            margem interna, texto centralizado; botão "?" centralizado.
   ─────────────────────────────────────────────────────────────────────────────
   PROTOCOLO BLE (para o firmware ESP32-S3)
    Serviço Nordic UART (NUS)  6e400001-b5a3-f393-e0a9-e50e24dcca9e
@@ -89,7 +91,7 @@ body{overflow:hidden}
 .wide .jog{height:120px}
 .wide #bAuto{height:80px!important}
 .wide #bUpAuto{height:64px!important}
-.wide #sec-cx{flex-direction:column;max-width:620px}
+.wide #sec-cx{flex-direction:column;align-items:stretch;max-width:620px}
 .wide #chart{height:300px}
 header{max-width:1100px;width:100%;margin:0 auto}
 .wide nav{justify-content:center}
@@ -102,7 +104,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:10p
 .logo{height:40px;max-width:150px;display:flex;align-items:center;flex:none}
 .logo img{max-height:40px;max-width:150px}
 .logo .ph{width:84px;height:40px;border:2px dashed var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--mut);letter-spacing:1px}
-.help{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;color:#fff;text-decoration:none;background:linear-gradient(180deg,#5bbcff,#1873c9);box-shadow:0 3px 0 #0d4c88,inset 0 1px 0 rgba(255,255,255,.25)}
+.help{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;line-height:1;padding-top:2px;font-family:Inter,system-ui,sans-serif;color:#fff;text-decoration:none;background:linear-gradient(180deg,#5bbcff,#1873c9);box-shadow:0 3px 0 #0d4c88,inset 0 1px 0 rgba(255,255,255,.25)}
 .help:active{transform:translateY(3px);box-shadow:0 0 0 #0d4c88}
 .pill{display:flex;align-items:center;gap:6px;background:var(--card);padding:6px 11px;border-radius:20px;font-size:12px;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--mut);flex:none}
@@ -115,7 +117,7 @@ section.on{display:flex}
 .lbl{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.8px}
 h2{font-size:20px}
 .row{display:flex;gap:10px}
-.btn{border:none;border-radius:14px;font-weight:700;color:#fff;display:flex;align-items:center;justify-content:center;gap:8px;letter-spacing:.6px;
+.btn{border:none;border-radius:14px;font-weight:700;padding:0 16px;text-align:center;line-height:1.15;box-sizing:border-box;color:#fff;display:flex;align-items:center;justify-content:center;gap:8px;letter-spacing:.6px;
   --g1:#3b4756;--g2:#222b35;--sh:#0a0e12;background:linear-gradient(180deg,var(--g1),var(--g2));
   box-shadow:0 4px 0 var(--sh),0 7px 14px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.18);
   transition:transform .07s ease,box-shadow .07s ease,filter .07s;text-shadow:0 1px 1px rgba(0,0,0,.35);position:relative;top:0}
@@ -162,7 +164,7 @@ nav button.on{color:var(--acc)}
 nav svg{width:24px;height:24px}
 #toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(20px);background:#26313c;color:var(--tx);padding:10px 16px;border-radius:12px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;max-width:90%;text-align:center;z-index:9;border:1px solid var(--line)}
 #toast.show{opacity:1;transform:translateX(-50%)}
-.sw{display:flex;align-items:center;justify-content:space-between;font-size:14px}
+.sw{display:flex;align-items:center;justify-content:space-between;gap:14px;font-size:14px}
 .tog{width:46px;height:28px;border-radius:14px;background:var(--card2);border:1px solid var(--line);position:relative;flex:none}
 .tog::after{content:"";position:absolute;width:22px;height:22px;border-radius:50%;background:var(--mut);top:2px;left:2px;transition:.2s}
 .tog.on{background:rgba(245,166,35,.3);border-color:var(--warn)}
@@ -361,7 +363,7 @@ nav svg{width:24px;height:24px}
 
 <script>
 'use strict';
-const APP_REV = 'Rev.09';
+const APP_REV = 'Rev.10';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = 20;      // bytes por escrita BLE
