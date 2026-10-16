@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   ATUADOR LINEAR · App de controle BLE (motor de passo NEMA + TB6600 + ESP32-S3)
-  Arquivo: index.html  ·  App Rev.11  ·  2026-10-16
+  Arquivo: index.html  ·  App Rev.12  ·  2026-10-16
   ─────────────────────────────────────────────────────────────────────────────
   CHANGELOG
    Rev.01 – Primeira versão: telas Operação / Perfil / Conexão, curva PCHIP (IPP3)
@@ -28,6 +28,9 @@
             margem interna, texto centralizado; botão "?" centralizado.
    Rev.11 – Aviso de navegador sem Bluetooth removido da tela Operação; na aba
             Conexão fica discreto e pode ser fechado (×), lembrado no aparelho.
+   Rev.12 – Botão Linear restaura a curva original (como no início): tempo total,
+            rampa, velocidade e escala de fábrica. Gráfico da tela Operação passa
+            a acompanhar na hora qualquer mudança do perfil (mesmo desconectado).
   ─────────────────────────────────────────────────────────────────────────────
   PROTOCOLO BLE (para o firmware ESP32-S3)
    Serviço Nordic UART (NUS)  6e400001-b5a3-f393-e0a9-e50e24dcca9e
@@ -364,7 +367,7 @@ nav svg{width:24px;height:24px}
 
 <script>
 'use strict';
-const APP_REV = 'Rev.11';
+const APP_REV = 'Rev.12';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = 20;      // bytes por escrita BLE
@@ -390,7 +393,7 @@ let profiles = store.get('atl_profiles', null) || { A:defProfile(), B:defProfile
 let cur = store.get('atl_cur','A'); if(!profiles[cur]) cur=Object.keys(profiles)[0];
 let sentSig = ''; // não persiste: o ESP32 pode ter reiniciado → reenvia sempre ao abrir/conectar
 const P = () => profiles[cur];
-function save(){ store.set('atl_profiles',profiles); store.set('atl_cur',cur); updateDirty(); }
+function save(){ store.set('atl_profiles',profiles); store.set('atl_cur',cur); updateDirty(); try{ refreshMini(); }catch(e){} }
 
 /* PCHIP (Fritsch–Carlson) — mesmo modelo do IPP3 */
 function pchip(pts){
@@ -542,7 +545,12 @@ function renderPresets(){
     a.onclick=()=>{ const n='ABCDEFGH'.split('').find(l=>!profiles[l]); profiles[n]=JSON.parse(JSON.stringify(P())); cur=n; save(); refreshAll(); toast(`Perfil ${n} criado (cópia)`); };
     c.appendChild(a); }
 }
-$('bLinear').onclick=()=>{ const p=P(); p.pts=linearPts(p.ttot,p.ramp,Math.round(p.pts[1].v||150)); sel=1; save(); drawChart(); updSummary(); toast('Curva linear restaurada'); };
+$('bLinear').onclick=()=>{ // restaura a curva de fábrica (como no início)
+  if(!confirm('Restaurar a curva original? Os ajustes da curva serão perdidos.')) return;
+  const p=P(), d=defProfile();
+  p.ttot=d.ttot; p.ramp=d.ramp; p.vscale=d.vscale; p.pts=d.pts;
+  sel=1; tiEdited=false; save(); refreshAll(); toast('Curva original restaurada');
+};
 
 /* ═════════════ BLE ═════════════ */
 let dev=null, rxC=null, txC=null, connected=false, authed=false, demo=false, rxBuf='', wq=Promise.resolve(), wPending=0, fwVer='';
@@ -769,6 +777,7 @@ function miniDraw(){
   g+=`<g id="mcCur" opacity="0"><line id="mcLine" y1="${MC.y0}" y2="${MC.y1}" stroke="#2ecc71" stroke-width="1.4"/><circle id="mcDot" r="4.5" fill="#2ecc71" stroke="#0f1419" stroke-width="1.5"/><circle id="mcReal" r="3" fill="#fff"/></g>`;
   $('mini').innerHTML=g; MC.X=X; MC.Y=Y; MC.f=f; MC.T=T;
 }
+function refreshMini(){ miniKey=''; miniCursor(lastSt.st,lastSt.rpm,lastSt.t/1000); }
 function miniCursor(st,rpm,tt){
   const k=sig()+'|'+cur; if(k!==miniKey){ miniKey=k; miniDraw(); }
   const show=st===1, up=st===2;
@@ -901,7 +910,8 @@ function simTick(){
 let curSec='op';
 function nav(s){ curSec=s; document.querySelectorAll('section').forEach(e=>e.classList.toggle('on',e.id==='sec-'+s));
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.sec===s));
-  if(s==='pf') requestAnimationFrame(drawChart); }
+  if(s==='pf') requestAnimationFrame(drawChart);
+  if(s==='op') refreshMini(); }
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>nav(b.dataset.sec));
 /* ═════════════ EFEITO DE BOTÃO PRESSIONADO ═════════════ */
 document.addEventListener('pointerdown',e=>{ const b=e.target.closest('button'); if(!b||b.disabled) return; b.classList.add('pressed');
@@ -922,7 +932,7 @@ function fit(){
 window.addEventListener('resize',fit); window.addEventListener('orientationchange',()=>setTimeout(fit,200));
 if(window.visualViewport) visualViewport.addEventListener('resize',fit);
 
-function refreshAll(){ updTeach(); renderPresets(); loadFields(); drawChart(); updSummary(); updTimeLbl(); updateDirty(); if(!online()||lastSt.st===0) { stroke=descSteps(); } }
+function refreshAll(){ try{ refreshMini(); }catch(e){} updTeach(); renderPresets(); loadFields(); drawChart(); updSummary(); updTimeLbl(); updateDirty(); if(!online()||lastSt.st===0) { stroke=descSteps(); } }
 $('verLbl').textContent='Android: Chrome/Edge · iPhone: app Bluefy · App '+APP_REV;
 fit(); refreshAll(); updHeader(); onStatus(0,0,0,0,0);
 </script>
