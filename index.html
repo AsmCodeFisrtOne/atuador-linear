@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   ATUADOR LINEAR · App de controle BLE (motor de passo NEMA + TB6600 + Device)
-  Arquivo: index.html  ·  App Rev.30  ·  2026-10-16
+  Arquivo: index.html  ·  App Rev.32  ·  2026-10-16
   ─────────────────────────────────────────────────────────────────────────────
   CHANGELOG
    Rev.01 – Primeira versão: telas Operação / Perfil / Conexão, curva PCHIP (IPP3)
@@ -69,6 +69,11 @@
    Rev.30 – Botão SERVIR 1 COPO na Operação (DOSE). Acesso exclusivo: só um aparelho
             por vez opera a máquina (trava de sessão no Firebase + Device aceita
             1 conexão BLE; segunda conexão recebe ERR,BUSY).
+   Rev.31 – Doses e animação do êmbolo passam a usar o CURSO FÍSICO (Teach In), não o
+            comprimento da curva. Se a curva acabar antes do alvo, a dose continua na
+            última velocidade da tabela. "Linear" recalcula o tempo pelo Teach In.
+   Rev.32 – Modo demonstração "casado" com o simulador do display (maquina.html):
+            os dois compartilham o nível do reservatório em maquinas/MAQ01/estado.
   ─────────────────────────────────────────────────────────────────────────────
   PROTOCOLO BLE (para o firmware do Device)
    Serviço Nordic UART (NUS)  6e400001-b5a3-f393-e0a9-e50e24dcca9e
@@ -102,6 +107,9 @@
                      Segue a tabela a partir de t0 (velocidades daquele trecho), com partida
                      limitada por amax e desaceleração para parar exatamente no alvo.
                      Não sobe o êmbolo depois. Sem doses disponíveis → ERR,DOSE,VAZIO.
+                     O limite é sempre o CURSO FÍSICO (curso_passos), nunca o fim da tabela:
+                     se a tabela acabar antes do alvo, continua na última velocidade dela
+                     (mín. 10 RPM) até completar a dose.
      UP            → subida automática da posição atual: igual ao passo 3 acima.
                      Se pos ≤ 0 (já no topo), ignora.
      STOP          → parada com desaceleração
@@ -484,7 +492,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 
 <script>
 'use strict';
-const APP_REV = 'Rev.30';
+const APP_REV = 'Rev.32';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = 20;      // bytes por escrita BLE
@@ -683,7 +691,8 @@ $('bLinear').onclick=()=>{ // restaura a curva de fábrica (como no início)
   if(!confirm('Restaurar a curva original? Os ajustes da curva serão perdidos.')) return;
   const p=P(), d=defProfile();
   p.ttot=d.ttot; p.ramp=d.ramp; p.vscale=d.vscale; p.pts=d.pts;
-  sel=1; save(); refreshAll(); toast('Curva original restaurada');
+  sel=1; save(); refreshAll();
+  if(teach){ teachTime(false); toast('Curva original restaurada · tempo ajustado ao Teach In'); } else toast('Curva original restaurada');
 };
 
 /* ═════════════ BLE ═════════════ */
@@ -805,7 +814,7 @@ async function sendProfile(){
     const r2=await prfAck;
     if(r1===false||r2===false){ toast('Equipamento recusou o perfil'); return false; }
     if(r1===null||r2===null){ toast('Sem confirmação do equipamento'); return false; }
-    sentSig=sig(p)+'|'+cur; stroke=descSteps(p); updateDirty(); toast(`Perfil ${cur} enviado ✓ (${v.length} pontos)`); return true;
+    sentSig=sig(p)+'|'+cur; stroke=physStroke(p); updateDirty(); toast(`Perfil ${cur} enviado ✓ (${v.length} pontos)`); return true;
   }finally{ $('bSend').disabled=!online(); $('bSend').textContent='⇪ Enviar ao Device'; }
 }
 $('bSend').onclick=sendProfile;
@@ -814,9 +823,10 @@ function updateDirty(){ $('dirtyWarn').style.visibility = online()&&isDirty() ? 
 
 /* ═════════════ OPERAÇÃO ═════════════ */
 const ST_NAME=['PARADO','▼ DESCENDO','▲ SUBINDO','▲ MANUAL','▼ MANUAL','EMERGÊNCIA'];
-let lastSt={st:0,rpm:0,pos:0,t:0,fc:0}, stroke=descSteps(), rotA=0, rotLast=performance.now();
+let lastSt={st:0,rpm:0,pos:0,t:0,fc:0}, stroke=1, rotA=0, rotLast=performance.now();
 function onStatus(st,rpm,pos,tms,fc){
   lastSt={st,rpm,pos,t:tms,fc};
+  if(demo && st===0) estadoPub(pos);
   const chip=$('stChip'); chip.textContent=ST_NAME[st]||'—'+(st===1?'':'');
   if(st===1) chip.textContent='▼ DESCENDO · Perfil '+cur;
   chip.className='chip'+(st>=1&&st<=4?' on':''); chip.style.background=st===5?'rgba(229,72,77,.2)':''; chip.style.color=st===5?'#ff8f92':'';
@@ -922,7 +932,7 @@ $('bAuto').onclick=async()=>{
   if(lastSt.st===1||lastSt.st===2){ send('STOP'); return; }
   if(lastSt.st===5){ toast('Rearme a emergência primeiro'); return; }
   if(isDirty()){ const ok=await sendProfile(); if(!ok) return; }
-  stroke=descSteps();
+  stroke=physStroke();
   if(lastSt.pos>=stroke-1) toast('Já no fundo — iniciando subida');
   else if(lastSt.pos>1) toast('Continuando da posição atual');
   send('AUTO');
@@ -933,7 +943,7 @@ $('bDose').onclick=async()=>{
   if(!teachSteps()){ toast('Faça o Teach In primeiro (aba Perfil)'); return; }
   const ts=teachSteps(), ppc=ts*mq.cup/mq.res; if(Math.floor((ts-Math.max(0,lastSt.pos))/ppc+1e-6)<1){ toast('Sem doses — reabasteça (aba Máquina)'); return; }
   if(isDirty()){ const ok=await sendProfile(); if(!ok) return; }
-  stroke=descSteps(); send('DOSE'); toast('Servindo 1 copo…');
+  stroke=physStroke(); send('DOSE'); toast('Servindo 1 copo…');
 };
 $('bUpAuto').onclick=async()=>{
   if(lastSt.st===5){ toast('Rearme a emergência primeiro'); return; }
@@ -999,10 +1009,30 @@ function lostLock(){ toast('Outro aparelho assumiu a máquina'); showBusy('outro
 function showBusy(src){ const b=$('busyBox'); b.innerHTML=`<b>Máquina em uso</b> por ${src}. Só um aparelho pode configurar/operar por vez. Aguarde ele desconectar (ou até 25 s sem sinal) e tente de novo.`; b.style.display='block'; }
 addEventListener('pagehide',()=>{ if(online()) releaseLock(); });
 
+/* ═══ estado compartilhado do reservatório (só no modo demonstração) ═══
+   usado = fração do reservatório já servida (0 cheio … 1 vazio) = pos ÷ curso físico */
+const EST_URL=`${FB_DB}/maquinas/${MAQ_ID}/estado.json`;
+let estLastPos=null, estSeen=0, estT=null, estIv=null, estReady=false;
+function estadoPub(pos){
+  if(!estReady) return;  // só publica depois de ler o estado atual (não sobrescreve o display)
+  if(estLastPos!==null && Math.abs(pos-estLastPos)<1) return;
+  estLastPos=pos; clearTimeout(estT);
+  estT=setTimeout(()=>{ const u=clamp(pos/Math.max(1,physStroke()),0,1);
+    fetch(EST_URL,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({usado:+u.toFixed(5),ts:Date.now(),origem:SESS_ID})}).catch(()=>{}); },300);
+}
+async function estadoPull(){
+  if(!demo || lastSt.st!==0) return;
+  try{ const d=await (await fetch(EST_URL,{cache:'no-store'})).json();
+    if(d && d.origem!==SESS_ID && d.ts>estSeen){ estSeen=d.ts;
+      const p=Math.round(clamp(d.usado,0,1)*physStroke()); sim.pos=p; sim.rpm=0; estLastPos=p; } }catch(e){}
+  estReady=true;
+}
+function estadoWatch(on){ clearInterval(estIv); estReady=false; if(on){ estSeen=0; estLastPos=null; estadoPull(); estIv=setInterval(estadoPull,2000); } }
+
 async function setDemo(on){
   if(on){ const r=await claimLock(); if(!r.ok){ showBusy('outro aparelho'); toast('Máquina em uso por outro aparelho'); return; } $('busyBox').style.display='none'; }
   else releaseLock();
-  _setDemo(on); if(on) startLockBeat();
+  _setDemo(on); if(on) startLockBeat(); estadoWatch(on);
 }
 function _setDemo(on){
   if(on && connected){ $('bDisc').click(); }
@@ -1026,7 +1056,7 @@ function simCmd(line){
     case 'DOSE': { if(!sim.tab||sim.st===5) break; const c=sim.cfg||{}, tot=sim.cum[sim.cum.length-1];
       const curso=c.curso>0?c.curso:tot, ppc=curso*(c.cup||150)/(c.res||2000);
       if(Math.floor((curso-sim.pos)/ppc+1e-6)<1){ setTimeout(()=>handleLine('ERR,DOSE,VAZIO'),40); break; }
-      sim.st=1; sim.t=simSinv(Math.max(0,sim.pos)); sim.doseEnd=Math.min(tot,sim.pos+ppc); break; }
+      sim.st=1; sim.t=simSinv(Math.max(0,sim.pos)); sim.doseEnd=Math.min(curso,sim.pos+ppc); break; }
     case 'STOP': if(sim.st===1||sim.st===2){ sim.st=0; sim.t=0; } break;
     case 'ESTOP': sim.st=5; sim.rpm=0; break;
     case 'RESET': if(sim.st===5) sim.st=0; break;
@@ -1054,14 +1084,14 @@ function simTick(){
     if(sim.dir<0){ sim.rpm=0; sim.dir=1; }
     const T=(sim.tab.length-1)*sim.dt/1000;
     if(sim.doseEnd!=null && sim.pos>=sim.doseEnd){ sim.pos=sim.doseEnd; sim.rpm=0; sim.st=0; sim.doseEnd=null; sim.t=0; }
-    else if(sim.t>=T){ if(sim.doseEnd!=null){ sim.st=0; sim.doseEnd=null; sim.t=0; } else simStartUp(); }
+    else if(sim.t>=T && sim.doseEnd==null){ simStartUp(); }
     else{
-      let tgt=simV(sim.t);
+      let tgt=sim.t>=T ? Math.max(sim.tab[sim.tab.length-1],10) : simV(sim.t); // dose além da tabela: última velocidade
       if(sim.doseEnd!=null){ const rem=(sim.doseEnd-sim.pos)/sp; tgt=Math.min(tgt,Math.sqrt(Math.max(0,2*(a/60)*rem))*60); if(rem>0) tgt=Math.max(tgt,2); } // desacelera p/ parar no alvo
-      toward(tgt); const limited = sim.rpm < simV(sim.t)-0.5;
+      toward(tgt); const limited = sim.t<T && sim.rpm < simV(sim.t)-0.5;
       sim.pos+=sim.rpm/60*sp*dt;
       sim.t = limited ? simSinv(sim.pos) : sim.t+dt;
-      if(sim.pos>=sim.cum[sim.cum.length-1]) sim.t=T;
+      if(sim.pos>=sim.cum[sim.cum.length-1] || sim.t>T) sim.t=T;
     }
   } else if(sim.st===2){ // subida constante com rampa
     const rem=(sim.pos-sim.upTarget)/sp; const vAllow=Math.sqrt(Math.max(0,2*(a/60)*rem))*60;
@@ -1154,7 +1184,8 @@ function fit(){
 window.addEventListener('resize',fit); window.addEventListener('orientationchange',()=>setTimeout(fit,200));
 if(window.visualViewport) visualViewport.addEventListener('resize',fit);
 
-function refreshAll(){ try{ refreshMini(); }catch(e){} try{ updMq(); }catch(e){} updTeach(); renderPresets(); loadFields(); drawChart(); updSummary(); updTimeLbl(); updateDirty(); if(!online()||lastSt.st===0) { stroke=descSteps(); } }
+function physStroke(p=P()){ try{ const t=teachSteps(); if(t>0) return t; }catch(e){} return descSteps(p); } // curso físico (Teach In) ou, sem ele, o da curva
+function refreshAll(){ try{ refreshMini(); }catch(e){} try{ updMq(); }catch(e){} updTeach(); renderPresets(); loadFields(); drawChart(); updSummary(); updTimeLbl(); updateDirty(); if(!online()||lastSt.st===0) { stroke=physStroke(); } }
 $('verLbl').textContent='Android: Chrome/Edge · iPhone: app Bluefy · App '+APP_REV;
 fit(); refreshAll(); updMq(); updHeader(); onStatus(0,0,0,0,0);
 

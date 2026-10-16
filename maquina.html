@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.10 · 2026-10-16
+  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.11 · 2026-10-16
   Faz o papel do display TFT (480×320) até o firmware do Device ficar pronto:
    1 Boas-vindas → 2 Pix (QR real, pedido no Firebase) → 3 Aprovado → 4 Servindo
    → 5 Bom apetite → (6 Reabastecer quando acabam as porções)
@@ -21,6 +21,8 @@
            andamento não é interrompida (o novo valor vale a partir da próxima).
   Rev.09 – Toque longo não abre o menu do navegador.
   Rev.10 – "Reservatório cheio" no app (campo reabastecido) zera o reservatório aqui.
+  Rev.11 – Nível do reservatório compartilhado com o modo demonstração do app
+           (maquinas/MAQ01/estado): servir/reabastecer em um reflete no outro.
 -->
 <html lang="pt-BR"><head>
 <meta charset="utf-8">
@@ -44,7 +46,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 </style></head><body>
 <div id="disp"><div id="scr"></div></div>
 <button id="fs">⛶ tela cheia</button>
-<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.10</div>
+<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.11</div>
 <script>
 'use strict';
 // Copyright (c) 2009 Kazuhiko Arase
@@ -281,7 +283,7 @@ function servir(){
   S.timer=setInterval(()=>{ const x=Math.min(1,(performance.now()-t0)/dur), p=prog(x); tick++;
     usado=u0+(u1-u0)*p;
     go('servindo',p,Math.floor(tick/6));
-    if(x>=1){ stopAll(); usado=u1; lsSet('maq_usado',usado);
+    if(x>=1){ stopAll(); usado=u1; lsSet('maq_usado',usado); estPub();
       fbPatch(S.id,{status:'servido',servido:{'.sv':'timestamp'}}); go('bom');
       S.timer=setTimeout(()=>{ if(S.tela==='bom') inicio(); },12000); } },50);
 }
@@ -289,7 +291,7 @@ $scr.addEventListener('click',e=>{ const t=e.target.closest('.tap'); if(!t) retu
   if(a==='quero') quero();
   else if(a==='cancelar'){ if(S.id) fbPatch(S.id,{status:'cancelado'}); inicio(); }
   else if(a==='outro'||a==='inicio') inicio();
-  else if(a==='pronto'){ usado=0; lsSet('maq_usado',0); inicio(); } });
+  else if(a==='pronto'){ usado=0; lsSet('maq_usado',0); estPub(); inicio(); } });
 
 /* ════════ ESCALA: display 3:2 ocupando a tela ════════ */
 function fit(){ const W=innerWidth-24, H=innerHeight-60; let w=Math.min(W,H*1.5); const d=document.getElementById('disp');
@@ -306,6 +308,18 @@ function applyCfg(d){
   checkRefill(d);
   if(changed && (S.tela==='boas'||S.tela==='reab')) go(porcoesRest()<=0?'reab':'boas'); // só nas telas de espera
 }
+/* ════════ ESTADO COMPARTILHADO DO RESERVATÓRIO (com o app em modo demonstração) ════════ */
+const EST_URL=`${FB_DB}/maquinas/${MAQ_ID}/estado.json`, ORIG='maq-'+Math.random().toString(36).slice(2,8);
+let estSeen=0;
+function estPub(){ fetch(EST_URL,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({usado:+usado.toFixed(5),ts:Date.now(),origem:ORIG})}).catch(()=>{}); }
+async function estPull(){
+  if(!(S.tela==='boas'||S.tela==='reab'||S.tela==='bom')) return;   // nunca no meio de uma venda
+  try{ const d=await (await fetch(EST_URL,{cache:'no-store'})).json();
+    if(d && d.origem!==ORIG && d.ts>estSeen){ estSeen=d.ts; const nu=Math.min(1,Math.max(0,+d.usado||0));
+      if(Math.abs(nu-usado)>1e-4){ usado=nu; lsSet('maq_usado',usado); if(S.tela!=='bom') go(porcoesRest()<=0?'reab':'boas'); } } }catch(e){}
+}
+estPull(); setInterval(estPull,2000);
+
 (function watchCfg(){
   try{ const es=new EventSource(`${FB_DB}/maquinas/${MAQ_ID}/config.json`);
     const h=e=>{ try{ const m=JSON.parse(e.data); if(m.path==='/') applyCfg(m.data); else loadCfg().then(applyCfg); }catch(_){} };
