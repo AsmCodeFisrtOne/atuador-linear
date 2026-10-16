@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   ATUADOR LINEAR · App de controle BLE (motor de passo NEMA + TB6600 + ESP32-S3)
-  Arquivo: index.html  ·  App Rev.17  ·  2026-10-16
+  Arquivo: index.html  ·  App Rev.18  ·  2026-10-16
   ─────────────────────────────────────────────────────────────────────────────
   CHANGELOG
    Rev.01 – Primeira versão: telas Operação / Perfil / Conexão, curva PCHIP (IPP3)
@@ -44,6 +44,9 @@
    Rev.17 – Volume do copo NÃO altera mais a curva: a curva fica como desenhada e a
             dose para ao atingir os passos de 1 copo (opção A). Removido o botão
             "Ajustar perfil para 1 copo". CFG ganhou <dose_passos>; novo comando DOSE.
+   Rev.18 – Volumes servem só para o ESP32 calcular as DOSES DISPONÍVEIS
+            (reservatório ÷ copo). A dose é a curva inteira (1 ciclo = 1 copo).
+            CFG agora envia <reserv_ml>,<copo_ml> no lugar de <dose_passos>.
   ─────────────────────────────────────────────────────────────────────────────
   PROTOCOLO BLE (para o firmware ESP32-S3)
    Serviço Nordic UART (NUS)  6e400001-b5a3-f393-e0a9-e50e24dcca9e
@@ -55,8 +58,9 @@
 
    App → ESP32
      PIN,<6 dígitos>
-     CFG,<micro>,<vsub_x10>,<comp_passos>,<vman_x10>,<rampa_ms>,<amax_rpm_s>,<ttot_ms>,<dose_passos>
-                   dose_passos = passos de 1 copo (Teach In × copo ÷ reservatório); 0 = sem dose
+     CFG,<micro>,<vsub_x10>,<comp_passos>,<vman_x10>,<rampa_ms>,<amax_rpm_s>,<ttot_ms>,<reserv_ml>,<copo_ml>
+                   o ESP32 calcula as doses disponíveis = floor(reserv_ml / copo_ml);
+                   desconta 1 a cada DOSE e volta ao total quando o reservatório é reabastecido
      PRF,<dt_ms>,<n>,<sum16>,<v0>,<v1>,...,<vn-1>   (v em 0,1 RPM; sum16 = Σv mod 65536)
      AUTO          → ciclo a partir da POSIÇÃO ATUAL (não volta ao topo antes):
                      1) o firmware calcula a integral da tabela S(t) [passos] e
@@ -67,9 +71,8 @@
                      2) se pos_atual ≥ S(fim) (já no fundo), pula para a subida.
                      3) subida a vsub constante até pos = −comp_passos, com rampa
                         amax na partida e na chegada; ao chegar, zera pos (topo).
-     DOSE          → VENDA: serve 1 copo a partir da posição atual. Segue a tabela desde t=0
-                     e PARA (com desaceleração amax) ao completar dose_passos — ou no fim
-                     da tabela, se ela acabar antes. Não sobe o êmbolo depois.
+     DOSE          → VENDA: serve 1 copo a partir da posição atual. Executa a tabela inteira
+                     (t = 0 até ttot) e para. Não sobe o êmbolo depois. Desconta 1 dose.
      UP            → subida automática da posição atual: igual ao passo 3 acima.
                      Se pos ≤ 0 (já no topo), ignora.
      STOP          → parada com desaceleração
@@ -390,7 +393,7 @@ nav svg{width:24px;height:24px}
       <div class="kv"><b id="mMpv">—</b><span>ml / volta</span></div>
     </div>
     <div id="mCheck" style="font-size:13px;color:var(--mut)"></div>
-    <div class="hint" style="text-align:left">A curva da aba Perfil não é alterada. Em cada venda o motor segue a curva e <b>para quando completa o volume do copo</b>.</div>
+    <div class="hint" style="text-align:left">A curva da aba Perfil não é alterada. Cada venda executa a curva inteira (1 ciclo = 1 copo). Os volumes servem para o ESP32 calcular as <b>doses disponíveis</b>.</div>
   </div>
 </section>
 
@@ -432,7 +435,7 @@ nav svg{width:24px;height:24px}
 
 <script>
 'use strict';
-const APP_REV = 'Rev.17';
+const APP_REV = 'Rev.18';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = 20;      // bytes por escrita BLE
@@ -466,7 +469,7 @@ function mqGet(){ return store.get('atl_mq',{res:2000,cup:150}); }
 function publishSim(){ clearTimeout(pubT); pubT=setTimeout(async()=>{
   try{ const p=P(), v=table(p).map(x=>Math.round(x*10));
     await fetch(`${FB_DB}/maquinas/${MAQ_ID}/config.json`,{method:'PUT',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({preco:+store.get('atl_price',12),ttot:p.ttot,dt:DT_MS,tabela:v,perfil:cur,reservatorio_ml:mqGet().res,copo_ml:mqGet().cup,porcoes:Math.floor(mqGet().res/mqGet().cup),dose_passos:Math.round(doseSteps()),passos_volta:spr(p),atualizado:{'.sv':'timestamp'}})});
+      body:JSON.stringify({preco:+store.get('atl_price',12),ttot:p.ttot,dt:DT_MS,tabela:v,perfil:cur,reservatorio_ml:mqGet().res,copo_ml:mqGet().cup,porcoes:Math.floor(mqGet().res/mqGet().cup),atualizado:{'.sv':'timestamp'}})});
   }catch(e){} },800); }
 
 /* PCHIP (Fritsch–Carlson) — mesmo modelo do IPP3 */
@@ -735,7 +738,7 @@ async function sendProfile(){
   $('bSend').disabled=true; $('bSend').textContent='Enviando…';
   try{
     const cfgAck=waitAck('CFG');
-    await send(`CFG,${p.micro},${Math.round(p.vsub*10)},${p.comp},${Math.round(p.vman*10)},${Math.round(p.ramp*1000)},${Math.round(p.amax)},${Math.round(p.ttot*1000)},${Math.round(doseSteps())}`);
+    await send(`CFG,${p.micro},${Math.round(p.vsub*10)},${p.comp},${Math.round(p.vman*10)},${Math.round(p.ramp*1000)},${Math.round(p.amax)},${Math.round(p.ttot*1000)},${Math.round(mq.res)},${Math.round(mq.cup)}`);
     const r1=await cfgAck;
     const prfAck=waitAck('PRF',8000);
     await send(`PRF,${DT_MS},${v.length},${sum},${v.join(',')}`);
@@ -925,7 +928,7 @@ $('bDemo').onclick=()=>setDemo(!demo);
 function simCmd(line){
   const a=line.split(','); const p=P();
   switch(a[0]){
-    case 'CFG': sim.cfg={micro:+a[1],vsub:+a[2]/10,comp:+a[3],vman:+a[4]/10,amax:+a[6],dose:+a[8]||0}; setTimeout(()=>handleLine('ACK,CFG'),60); break;
+    case 'CFG': sim.cfg={micro:+a[1],vsub:+a[2]/10,comp:+a[3],vman:+a[4]/10,amax:+a[6]}; setTimeout(()=>handleLine('ACK,CFG'),60); break;
     case 'PRF': { const v=a.slice(4).map(Number); const sum=v.reduce((x,y)=>x+y,0)%65536;
       if(v.length!==+a[2]||sum!==+a[3]){ setTimeout(()=>handleLine('ERR,PRF'),60); break; }
       sim.dt=+a[1]; sim.tab=v.map(x=>x/10); buildCum(); setTimeout(()=>handleLine('ACK,PRF'),120); break; }
@@ -933,7 +936,7 @@ function simCmd(line){
       if(sim.pos>=last-1){ simStartUp(); break; }
       sim.st=1; sim.t=simSinv(Math.max(0,sim.pos)); break; }
     case 'UP': if(sim.st===5||sim.pos<=0) break; simStartUp(); break;
-    case 'DOSE': { if(!sim.tab||sim.st===5) break; const d=(sim.cfg&&sim.cfg.dose)||0; sim.st=1; sim.t=0; sim.doseEnd=d>0?sim.pos+d:null; break; }
+    case 'DOSE': { if(!sim.tab||sim.st===5) break; sim.st=1; sim.t=0; sim.doseEnd=Infinity; break; }
     case 'STOP': if(sim.st===1||sim.st===2){ sim.st=0; sim.t=0; } break;
     case 'ESTOP': sim.st=5; sim.rpm=0; break;
     case 'RESET': if(sim.st===5) sim.st=0; break;
@@ -996,11 +999,8 @@ function updMq(){
   if(!ts){ ['mSpm','mSpc','mRpc','mMpv'].forEach(i=>$(i).textContent='—'); $('mCheck').textContent=''; return; }
   const spm=ts/mq.res, spc=spm*mq.cup, sp=spr();
   $('mSpm').textContent=fmt(spm,1); $('mSpc').textContent=fmtInt(spc); $('mRpc').textContent=fmt(spc/sp); $('mMpv').textContent=fmt(sp/spm,1);
-  // dose: tempo em que a curva completa os passos de 1 copo
-  const v=table(P()), dt=DT_MS/1000; let acc=0, tDose=null;
-  for(let i=1;i<v.length;i++){ acc+=(v[i-1]+v[i])/2/60*dt*sp; if(acc>=spc){ tDose=i*dt; break; } }
-  if(tDose!==null) $('mCheck').innerHTML=`<span style="color:var(--ok)">✓ Cada copo: o motor segue a curva do perfil ${cur} e para em <b>${fmtInt(spc)} passos</b>, aos <b>${fmt(tDose,1)} s</b> (curva de ${fmt(P().ttot,1)} s).</span>`;
-  else $('mCheck').innerHTML=`<span style="color:var(--warn)">⚠ A curva do perfil ${cur} acaba antes de encher o copo: entrega só <b>${fmt(acc/spm,0)} ml</b> de ${fmt(mq.cup,0)} ml. Aumente o tempo total ou as velocidades na aba Perfil.</span>`;
+  const ml=descSteps(P())/spm;
+  $('mCheck').innerHTML=`Cada ciclo da curva do perfil ${cur} (${fmt(P().ttot,1)} s) desloca ≈ <b style="color:var(--tx)">${fmt(ml,0)} ml</b>.`;
 }
 function doseSteps(){ const ts=teachSteps(); return ts? ts/mq.res*mq.cup : 0; }
 function setMq(k,v,min){ if(isNaN(v)||v<min) { updMq(); return; } mq[k]=+v; if(mq.cup>mq.res) mq.cup=mq.res; store.set('atl_mq',mq); updMq(); publishSim(); }

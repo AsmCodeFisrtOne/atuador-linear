@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.04 · 2026-10-16
+  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.05 · 2026-10-16
   Faz o papel do display TFT (480×320) até o firmware do ESP32-S3 ficar pronto:
    1 Boas-vindas → 2 Pix (QR real, pedido no Firebase) → 3 Aprovado → 4 Servindo
    → 5 Bom apetite → (6 Reabastecer quando acabam as porções)
@@ -11,6 +11,7 @@
            Tela Aprovado fica 3 s.
   Rev.03 – Porções por reservatório vêm do app (volume do reservatório ÷ volume do copo).
   Rev.04 – Dose: segue a curva e para ao completar os passos de 1 copo (dose_passos).
+  Rev.05 – Dose = curva inteira (1 ciclo = 1 copo); volumes só contam as doses disponíveis.
 -->
 <html lang="pt-BR"><head>
 <meta charset="utf-8">
@@ -32,7 +33,7 @@ body{display:flex;align-items:center;justify-content:center}
 </style></head><body>
 <div id="disp"><div id="scr"></div></div>
 <button id="fs">⛶ tela cheia</button>
-<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.04</div>
+<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.05</div>
 <script>
 'use strict';
 // Copyright (c) 2009 Kazuhiko Arase
@@ -253,13 +254,10 @@ function aprovado(){
 function servir(){
   // curva recebida: progresso = volume acumulado (integral da velocidade) / volume total
   let dur=serveTime(), frac=t=>t;
-  if(CFG){ const v=CFG.tabela, dt=(CFG.dt||20)/1000, sp=CFG.passos_volta||1600, cum=[0];
-    for(let i=1;i<v.length;i++) cum.push(cum[i-1]+(v[i-1]+v[i])/20/60*dt*sp); // passos acumulados (tabela em 0,1 RPM; trapézio)
-    const dose=CFG.dose_passos>0 ? Math.min(CFG.dose_passos,cum[cum.length-1]) : cum[cum.length-1];
-    let k=cum.findIndex(c=>c>=dose); if(k<1) k=v.length-1;
-    const tEnd=(k-1+(dose-cum[k-1])/Math.max(1e-9,cum[k]-cum[k-1]))*dt; // instante em que completa a dose
-    dur=Math.max(300,tEnd*1000);
-    frac=x=>{ const t=x*tEnd/dt, i=Math.min(cum.length-2,Math.floor(t)), f=t-i; return Math.min(1,(cum[i]+(cum[i+1]-cum[i])*f)/dose); }; }
+  if(CFG){ const v=CFG.tabela, dt=CFG.dt||20, cum=[0];
+    for(let i=1;i<v.length;i++) cum.push(cum[i-1]+(v[i-1]+v[i])/2);
+    const tot=cum[cum.length-1]||1; dur=(v.length-1)*dt;
+    frac=x=>{ const f=x*(v.length-1), i=Math.min(v.length-2,Math.floor(f)), k=f-i; return (cum[i]+(cum[i+1]-cum[i])*k)/tot; }; }
   const t0=performance.now(); let tick=0;
   S.tela='servindo';
   S.timer=setInterval(()=>{ const x=Math.min(1,(performance.now()-t0)/dur), p=frac(x); tick++;
