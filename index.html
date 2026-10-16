@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   ATUADOR LINEAR · App de controle BLE (motor de passo NEMA + TB6600 + ESP32-S3)
-  Arquivo: index.html  ·  App Rev.21  ·  2026-10-16
+  Arquivo: index.html  ·  App Rev.22  ·  2026-10-16
   ─────────────────────────────────────────────────────────────────────────────
   CHANGELOG
    Rev.01 – Primeira versão: telas Operação / Perfil / Conexão, curva PCHIP (IPP3)
@@ -51,6 +51,7 @@
             reservatório ou copo marca o perfil como "a enviar".
    Rev.20 – Removido "faturamento por carga" da aba Máquina.
    Rev.21 – Campos da aba Máquina desabilitados sem conexão (ou sem modo demonstração).
+   Rev.22 – Aba Perfil também bloqueada sem conexão: curva, campos, perfis e Teach In.
   ─────────────────────────────────────────────────────────────────────────────
   PROTOCOLO BLE (para o firmware ESP32-S3)
    Serviço Nordic UART (NUS)  6e400001-b5a3-f393-e0a9-e50e24dcca9e
@@ -295,6 +296,7 @@ nav svg{width:24px;height:24px}
 <!-- ═══════════════ PERFIL ═══════════════ -->
 <section id="sec-pf">
  <div class="col" id="pfL">
+  <div id="pOff" class="warnbox" style="display:none">Conecte ao Device ou ative o <b>Modo demonstração</b> (aba Conexão) para editar.</div>
   <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
     <h2>Perfil de descida</h2>
     <div class="row" style="gap:6px" id="presets"></div>
@@ -441,7 +443,7 @@ nav svg{width:24px;height:24px}
 
 <script>
 'use strict';
-const APP_REV = 'Rev.21';
+const APP_REV = 'Rev.22';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = 20;      // bytes por escrita BLE
@@ -547,7 +549,7 @@ function updPtEdit(){
   const tI=$('ptT'), vI=$('ptV');
   if(document.activeElement!==tI) tI.value=q.t.toFixed(2);
   if(document.activeElement!==vI) vI.value=Math.round(q.v);
-  tI.disabled = sel<=1 || sel===p.pts.length-1; vI.disabled = sel===0;
+  tI.disabled = sel<=1 || sel===p.pts.length-1 || !online(); vI.disabled = sel===0 || !online();
 }
 function setPoint(i,t,v){
   const p=P(), pts=p.pts, last=pts.length-1;
@@ -617,6 +619,13 @@ function updSummary(){
   if(typeof teach!=='undefined') updTeach();
   $('summary').innerHTML=`Curso: <b style="color:var(--tx)">${fmtInt(st)} passos · ${fmt(st/spr(p))} voltas</b> · subida ≈ <b style="color:var(--tx)">${fmt(upTime(p),1)} s</b>`;
 }
+function lockPf(){
+  const off=!online();
+  document.querySelectorAll('#sec-pf input, #sec-pf select, #sec-pf button').forEach(el=>el.disabled=off);
+  const cw=$('chartWrap'); cw.style.pointerEvents=off?'none':''; cw.style.opacity=off?.5:'';
+  $('pOff').style.display=off?'block':'none';
+  if(!off){ try{ updPtEdit(); updTeach(); }catch(e){} $('bSend').disabled=false; }
+}
 function renderPresets(){
   const c=$('presets'); c.innerHTML='';
   Object.keys(profiles).forEach(k=>{ const b=document.createElement('button'); b.className='chip'+(k===cur?' on':''); b.textContent=k;
@@ -627,6 +636,7 @@ function renderPresets(){
   if(Object.keys(profiles).length<8){ const a=document.createElement('button'); a.className='chip'; a.textContent='+';
     a.onclick=()=>{ const n='ABCDEFGH'.split('').find(l=>!profiles[l]); profiles[n]=JSON.parse(JSON.stringify(P())); cur=n; save(); refreshAll(); toast(`Perfil ${n} criado (cópia)`); };
     c.appendChild(a); }
+  try{ lockPf(); }catch(e){}
 }
 $('bLinear').onclick=()=>{ // restaura a curva de fábrica (como no início)
   if(!confirm('Restaurar a curva original? Os ajustes da curva serão perdidos.')) return;
@@ -735,6 +745,7 @@ function updHeader(){
   ['bAuto','bTop','bBot'].forEach(id=>$(id).disabled=!online()); document.querySelectorAll('.jog').forEach(b=>b.disabled=!online()); $('bUpAuto').disabled=!online()||lastSt.st===1||lastSt.st===2;
   $('bSend').disabled=!online();
   ['mRes','mCup','cPrice'].forEach(id=>$(id).disabled=!online()); $('mOff').style.display=online()?'none':'block';
+  lockPf();
   renderDevs(); updateDirty();
 }
 
@@ -805,7 +816,7 @@ function updTeach(){
   const prf=descSteps(P()), diff=(prf-st)/st*100;
   $('tiInfo').innerHTML = Math.abs(diff)<0.5 ? '<span style="color:var(--ok)">✓ Perfil coincide com o curso ensinado.</span>'
     : `Perfil percorre <b style="color:var(--tx)">${fmtInt(prf)}</b> passos (<span style="color:var(--warn)">${diff>0?'+':''}${fmt(diff,1)}%</span> do curso ensinado).`;
-  $('bTiTime').disabled=$('bTiApply').disabled=false;
+  $('bTiTime').disabled=$('bTiApply').disabled=!online();
 }
 $('bTop').onclick=()=>{ if(lastSt.st!==0){ toast('Pare o motor primeiro'); return; } send('ZERO'); toast('TOPO definido (posição = 0)'); };
 $('bBot').onclick=()=>{
