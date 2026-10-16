@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   ATUADOR LINEAR · App de controle BLE (motor de passo NEMA + TB6600 + ESP32-S3)
-  Arquivo: index.html  ·  App Rev.18  ·  2026-10-16
+  Arquivo: index.html  ·  App Rev.20  ·  2026-10-16
   ─────────────────────────────────────────────────────────────────────────────
   CHANGELOG
    Rev.01 – Primeira versão: telas Operação / Perfil / Conexão, curva PCHIP (IPP3)
@@ -47,6 +47,9 @@
    Rev.18 – Volumes servem só para o ESP32 calcular as DOSES DISPONÍVEIS
             (reservatório ÷ copo). A dose é a curva inteira (1 ciclo = 1 copo).
             CFG agora envia <reserv_ml>,<copo_ml> no lugar de <dose_passos>.
+   Rev.19 – Preço do copo também vai ao ESP32 (CFG <preco_centavos>); mudar preço,
+            reservatório ou copo marca o perfil como "a enviar".
+   Rev.20 – Removido "faturamento por carga" da aba Máquina.
   ─────────────────────────────────────────────────────────────────────────────
   PROTOCOLO BLE (para o firmware ESP32-S3)
    Serviço Nordic UART (NUS)  6e400001-b5a3-f393-e0a9-e50e24dcca9e
@@ -58,7 +61,8 @@
 
    App → ESP32
      PIN,<6 dígitos>
-     CFG,<micro>,<vsub_x10>,<comp_passos>,<vman_x10>,<rampa_ms>,<amax_rpm_s>,<ttot_ms>,<reserv_ml>,<copo_ml>
+     CFG,<micro>,<vsub_x10>,<comp_passos>,<vman_x10>,<rampa_ms>,<amax_rpm_s>,<ttot_ms>,<reserv_ml>,<copo_ml>,<preco_centavos>
+                   preco_centavos = preço do copo em centavos (ex.: 1200 = R$ 12,00)
                    o ESP32 calcula as doses disponíveis = floor(reserv_ml / copo_ml);
                    desconta 1 a cada DOSE e volta ao total quando o reservatório é reabastecido
      PRF,<dt_ms>,<n>,<sum16>,<v0>,<v1>,...,<vn-1>   (v em 0,1 RPM; sum16 = Σv mod 65536)
@@ -380,7 +384,6 @@ nav svg{width:24px;height:24px}
 
   <div class="card" style="display:flex;justify-content:space-around;gap:8px;text-align:center">
     <div class="kv" style="align-items:center"><b class="big" id="mPor" style="color:var(--acc);height:auto;line-height:1.1">—</b><span>porções por reservatório</span></div>
-    <div class="kv" style="align-items:center"><b class="big" id="mFat" style="color:var(--ok);height:auto;line-height:1.1">—</b><span>faturamento por carga</span></div>
   </div>
 
   <div class="card" style="display:flex;flex-direction:column;gap:10px">
@@ -435,7 +438,7 @@ nav svg{width:24px;height:24px}
 
 <script>
 'use strict';
-const APP_REV = 'Rev.18';
+const APP_REV = 'Rev.20';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = 20;      // bytes por escrita BLE
@@ -497,7 +500,7 @@ function upTime(p=P()){
   const dAcc=v*v/a; // aceleração + desaceleração
   return rev>=dAcc ? 2*v/a+(rev-dAcc)/v : 2*Math.sqrt(rev/a);
 }
-function sig(p=P()){ return JSON.stringify([p.ttot,p.ramp,p.vsub,p.comp,p.vman,p.micro,p.amax,p.pts]); }
+function sig(p=P()){ return JSON.stringify([p.ttot,p.ramp,p.vsub,p.comp,p.vman,p.micro,p.amax,p.pts,store.get('atl_price',12),store.get('atl_mq',null)]); }
 
 /* ═════════════ GRÁFICO ═════════════ */
 const svg=$('chart'); let sel=3, CH={W:340,H:240,L:40,R:12,T:12,B:30};
@@ -738,7 +741,7 @@ async function sendProfile(){
   $('bSend').disabled=true; $('bSend').textContent='Enviando…';
   try{
     const cfgAck=waitAck('CFG');
-    await send(`CFG,${p.micro},${Math.round(p.vsub*10)},${p.comp},${Math.round(p.vman*10)},${Math.round(p.ramp*1000)},${Math.round(p.amax)},${Math.round(p.ttot*1000)},${Math.round(mq.res)},${Math.round(mq.cup)}`);
+    await send(`CFG,${p.micro},${Math.round(p.vsub*10)},${p.comp},${Math.round(p.vman*10)},${Math.round(p.ramp*1000)},${Math.round(p.amax)},${Math.round(p.ttot*1000)},${Math.round(mq.res)},${Math.round(mq.cup)},${Math.round(price*100)}`);
     const r1=await cfgAck;
     const prfAck=waitAck('PRF',8000);
     await send(`PRF,${DT_MS},${v.length},${sum},${v.join(',')}`);
@@ -993,7 +996,7 @@ function updMq(){
   if(document.activeElement!==$('mRes')) $('mRes').value=mq.res;
   if(document.activeElement!==$('mCup')) $('mCup').value=mq.cup;
   if(document.activeElement!==$('cPrice')) $('cPrice').value=price;
-  const n=porcoes(); $('mPor').textContent=n; $('mFat').textContent='R$ '+(n*price).toFixed(2).replace('.',',');
+  const n=porcoes(); $('mPor').textContent=n;
   const ts=teachSteps();
   $('mNoTeach').style.display=ts?'none':'block'; $('mDose').style.opacity=ts?1:.35;
   if(!ts){ ['mSpm','mSpc','mRpc','mMpv'].forEach(i=>$(i).textContent='—'); $('mCheck').textContent=''; return; }
@@ -1003,10 +1006,10 @@ function updMq(){
   $('mCheck').innerHTML=`Cada ciclo da curva do perfil ${cur} (${fmt(P().ttot,1)} s) desloca ≈ <b style="color:var(--tx)">${fmt(ml,0)} ml</b>.`;
 }
 function doseSteps(){ const ts=teachSteps(); return ts? ts/mq.res*mq.cup : 0; }
-function setMq(k,v,min){ if(isNaN(v)||v<min) { updMq(); return; } mq[k]=+v; if(mq.cup>mq.res) mq.cup=mq.res; store.set('atl_mq',mq); updMq(); publishSim(); }
+function setMq(k,v,min){ if(isNaN(v)||v<min) { updMq(); return; } mq[k]=+v; if(mq.cup>mq.res) mq.cup=mq.res; store.set('atl_mq',mq); updMq(); publishSim(); updateDirty(); }
 $('mRes').addEventListener('change',()=>setMq('res',parseFloat($('mRes').value),50));
 $('mCup').addEventListener('change',()=>setMq('cup',parseFloat($('mCup').value),5));
-$('cPrice').addEventListener('change',()=>{ const v=parseFloat($('cPrice').value); if(!isNaN(v)&&v>=0){ price=+v.toFixed(2); store.set('atl_price',price); publishSim(); } updMq(); });
+$('cPrice').addEventListener('change',()=>{ const v=parseFloat($('cPrice').value); if(!isNaN(v)&&v>=0){ price=+v.toFixed(2); store.set('atl_price',price); publishSim(); updateDirty(); } updMq(); });
 
 /* ═════════════ NAVEGAÇÃO ═════════════ */
 let curSec='op';
