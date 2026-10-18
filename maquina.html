@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.15 · 2026-10-18
+  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.16 · 2026-10-18
   Faz o papel do display TFT (480×320) até o firmware do Device ficar pronto:
    1 Boas-vindas → 2 Pix (QR real, pedido no Firebase) → 3 Aprovado → 4 Servindo
    → 5 Bom apetite → (6 Reabastecer quando acabam as porções)
@@ -25,6 +25,7 @@
            (maquinas/MAQ01/estado): servir/reabastecer em um reflete no outro.
   Rev.12 – Cabeçalho: bateria removida; GPS (ícone de satélite verde/vermelho, nº de
            satélites, barras de sinal e coordenadas) — valores simulados.
+  Rev.16 – Retire o copo: 5 s para voltar ao início (era 12 s).
   Rev.15 – Display ocupa a tela toda do celular; em pé, gira 90° sozinho para usar a altura.
   Rev.14 – Arte nova (igual ao Hub v0.5): tema escuro de alto contraste; cabeçalho com
            status agrupado [Wi-Fi BT | GPS e coordenadas | satélites e barras]; bico mais
@@ -56,7 +57,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 </style></head><body>
 <div id="disp"><div id="scr"></div></div>
 <button id="fs">⛶ tela cheia</button>
-<div id="tag">SIMULADOR DO DISPLAY · Rev.15</div>
+<div id="tag">SIMULADOR DO DISPLAY · Rev.16</div>
 <script>
 'use strict';
 // Copyright (c) 2009 Kazuhiko Arase
@@ -226,7 +227,7 @@ const T={
    <g transform="translate(232 132)">${[0,1,2].map(i=>`<circle cx="${i*15+6}" cy="6" r="5" fill="${C.pink}" opacity="${[1,.6,.3][(i+tick)%3]}"/>`).join('')}</g>
    ${bigBtn(412,180,Math.round(p*100)+'%','url(#btn)','none',p)} ${resv()}`); },
  // sem botão: retirada do copo + contagem para voltar ao início (toque em qualquer lugar volta já)
- bom:(secs=12)=>screen(`${header()}
+ bom:(secs=5)=>screen(`${header()}
    ${[[196,74,8],[30,140,6],[214,214,5],[176,170,6]].map(a=>star(...a)).join('')}
    <g transform="translate(0 -26)">${cup()} ${swirl(1,true)}</g>
    <g stroke="${C.tx2}" stroke-width="3" stroke-linecap="round" opacity=".8"><path d="M42 230 v-26"/><path d="M162 230 v-26"/><path d="M30 214 v-14"/><path d="M174 214 v-14"/></g>
@@ -238,7 +239,7 @@ const T={
      <circle cx="18" cy="17" r="9" fill="${C.green}"/><path d="M13.5 17 l3.2 3.2 l6.5 -6.5" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
      <text x="36" y="23" font-size="14.5" fill="${C.tx}">Porção completa</text></g>
    <g transform="translate(420 190)"><circle r="42" fill="${C.card}" opacity=".6"/><circle r="42" fill="none" stroke="#1A0E08" stroke-width="8"/>
-     <circle r="42" fill="none" stroke="${C.green}" stroke-width="8" stroke-linecap="round" stroke-dasharray="${2*Math.PI*42*secs/12} 400" transform="rotate(-90)"/>
+     <circle r="42" fill="none" stroke="${C.green}" stroke-width="8" stroke-linecap="round" stroke-dasharray="${2*Math.PI*42*secs/5} 400" transform="rotate(-90)"/>
      <text y="6" font-size="32" fill="${C.tx}" text-anchor="middle" font-weight="700">${secs}</text>
      <text y="24" font-size="11" fill="${C.tx2}" text-anchor="middle">segundos</text></g>
    <text x="232" y="196" font-size="14" fill="${C.tx2}">A tela volta ao início</text>
@@ -313,8 +314,8 @@ function servir(){
     go('servindo',p,Math.floor(tick/6));
     if(x>=1){ stopAll(); usado=u1; lsSet('maq_usado',usado); estPub();
       fbPatch(S.id,{status:'servido',servido:{'.sv':'timestamp'}});
-      const tb=performance.now(); go('bom',12);
-      S.timer=setInterval(()=>{ if(S.tela!=='bom'){ clearInterval(S.timer); return; } const left=Math.max(0,12-Math.floor((performance.now()-tb)/1000));
+      const tb=performance.now(); go('bom',5);
+      S.timer=setInterval(()=>{ if(S.tela!=='bom'){ clearInterval(S.timer); return; } const left=Math.max(0,5-Math.floor((performance.now()-tb)/1000));
         if(left<=0){ stopAll(); inicio(); } else go('bom',left); },250); } },50);
 }
 $scr.addEventListener('click',e=>{ const t=e.target.closest('.tap'); if(!t) return; const a=t.dataset.act;

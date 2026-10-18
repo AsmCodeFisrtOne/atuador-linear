@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  pagar.html · Pagamento SIMULADO · Rev.04 (sem menu de toque longo) (fecha/encerra 3 s após aprovar) (tela de aprovação = Tela 3 do display) · 2026-10-16
+  pagar.html · Pagamento SIMULADO · Rev.05 (ajusta o tamanho mesmo em "Site para computador") · Rev.04 (sem menu de toque longo) (fecha/encerra 3 s após aprovar) (tela de aprovação = Tela 3 do display) · 2026-10-16
   Aberto pelo QR Code da máquina: pagar.html?id=<código da venda>&v=<valor>
   Lê/grava vendas/<id> no Firebase Realtime Database (REST, sem SDK).
   Nenhum valor é cobrado — apenas simula a confirmação do Pix.
@@ -39,7 +39,14 @@ body{font-family:'Bonnie',system-ui,sans-serif;color:var(--choc);background:radi
 .hide{display:none!important}
 body{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
 input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
-</style></head><body>
+</style>
+<script>
+// Rev.05: se o Chrome abrir em "Site para computador" (layout de ~980 px), amplia a página
+// para ficar do tamanho certo no celular.
+(function(){ function fix(){ try{ const sw=Math.min(screen.width,screen.height), coarse=matchMedia('(pointer:coarse)').matches;
+  const k=(coarse && innerWidth>sw*1.3) ? innerWidth/sw : 1; document.documentElement.style.zoom=k>1?k.toFixed(3):''; }catch(e){} }
+  fix(); addEventListener('resize',fix); })();
+</script></head><body>
 <div class="wrap">
   <div class="brand">Setup</div>
   <div class="sim">SIMULAÇÃO · nenhum valor é cobrado</div>
@@ -98,7 +105,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
   <!-- erro / já usado / expirado -->
   <div class="card err hide" id="vErr"><div class="msg" id="eMsg">Ops!</div><div class="sub" id="eSub"></div></div>
 
-  <div class="foot">Página de demonstração · Rev.04</div>
+  <div class="foot">Página de demonstração · Rev.05</div>
 </div>
 <script>
 'use strict';
