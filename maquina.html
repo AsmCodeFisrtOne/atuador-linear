@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.12 · 2026-10-16
+  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.13 · 2026-10-18
   Faz o papel do display TFT (480×320) até o firmware do Device ficar pronto:
    1 Boas-vindas → 2 Pix (QR real, pedido no Firebase) → 3 Aprovado → 4 Servindo
    → 5 Bom apetite → (6 Reabastecer quando acabam as porções)
@@ -25,6 +25,9 @@
            (maquinas/MAQ01/estado): servir/reabastecer em um reflete no outro.
   Rev.12 – Cabeçalho: bateria removida; GPS (ícone de satélite verde/vermelho, nº de
            satélites, barras de sinal e coordenadas) — valores simulados.
+  Rev.13 – Cabeçalho: ícone de Wi-Fi à esquerda do Bluetooth (igual ao Hub v0.2.1):
+           cinza sem rede · amarelo conectando · verde conectado · vermelho erro.
+           Aqui reflete a internet do navegador (verde online / vermelho offline).
 -->
 <html lang="pt-BR"><head>
 <meta charset="utf-8">
@@ -48,7 +51,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 </style></head><body>
 <div id="disp"><div id="scr"></div></div>
 <button id="fs">⛶ tela cheia</button>
-<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.12</div>
+<div id="tag">SIMULADOR DO DISPLAY · gire o celular na horizontal · Rev.13</div>
 <script>
 'use strict';
 // Copyright (c) 2009 Kazuhiko Arase
@@ -76,9 +79,13 @@ function blobs(){return `
 function header(right=''){ const g=(typeof GPS!=='undefined')?GPS:{fix:true,sats:9,lat:-23.55052,lon:-46.63331};
  const col=g.fix?'#3E9B4F':'#D9363E', bars=g.fix?Math.min(5,Math.max(1,Math.round(g.sats/2))):0;
  const f=v=>(v<0?'−':'')+Math.abs(v).toFixed(5).replace('.',',');
+ const ws=(typeof WIFI!=='undefined')?WIFI:(navigator.onLine?'ok':'erro');
+ const wcol={ok:'#3E9B4F',con:'#E39A1B',erro:'#D9363E',off:'#5B3A29'}[ws]||'#5B3A29', wop=ws==='off'?'.3':'1';
  return `
  <rect x="14" y="12" width="74" height="28" rx="8" fill="none" stroke="${C.choc2}" stroke-opacity=".35" stroke-dasharray="4 3"/>
  <text x="51" y="31" font-size="11" fill="${C.choc2}" fill-opacity=".6" text-anchor="middle" letter-spacing="1">SEU LOGO</text>
+ <!-- Wi-Fi (Rev.13): cinza sem rede · amarelo conectando · verde conectado · vermelho erro -->
+ <g transform="translate(212 15)" fill="none" stroke="${wcol}" stroke-width="1.8" stroke-linecap="round" opacity="${wop}"><path d="M2 6.5a12 12 0 0 1 16 0"/><path d="M5 10a7.5 7.5 0 0 1 10 0"/><path d="M8 13.4a3 3 0 0 1 4 0"/><circle cx="10" cy="16.3" r="1.2" fill="${wcol}" stroke="none"/></g>
  <!-- Bluetooth -->
  <g transform="translate(236 15)" fill="none" stroke="${C.choc}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity=".55"><path d="M3 5l10 9-5 4.5V1l5 4.5-10 9"/></g>
  <!-- GPS: coordenadas -->
@@ -306,6 +313,7 @@ $scr.addEventListener('click',e=>{ const t=e.target.closest('.tap'); if(!t) retu
   else if(a==='outro'||a==='inicio') inicio();
   else if(a==='pronto'){ usado=0; lsSet('maq_usado',0); estPub(); inicio(); } });
 
+['online','offline'].forEach(ev=>addEventListener(ev,()=>{ if(S.tela==='boas'||S.tela==='reab') inicio(); }));  // ícone Wi-Fi (Rev.13)
 /* ════════ ESCALA: display 3:2 ocupando a tela ════════ */
 function fit(){ const W=innerWidth-24, H=innerHeight-60; let w=Math.min(W,H*1.5); const d=document.getElementById('disp');
   $scr.style.width=w+'px'; $scr.style.height=(w/1.5)+'px'; }
