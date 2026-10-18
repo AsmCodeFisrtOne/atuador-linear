@@ -82,6 +82,12 @@
             com botão próprio "Salvar Wi-Fi no Hub" (WIFI,<ssid_b64>,<senha_b64>) e
             estado do Wi-Fi informado pelo Hub. Senha só na memória (nunca no
             localStorage); apagada após o envio e ao desconectar.
+   Rev.37 – CURVA DO COPO (venda): rampa de aceleração · velocidade constante · rampa de
+            desaceleração, igual para todos os copos. O app calcula o tempo constante para
+            entregar exatamente os passos de 1 copo (Teach In × copo ÷ reservatório).
+            "Servir 1 copo" e as vendas usam esta curva; o perfil completo fica para o
+            ciclo automático e o Teach In. Novo comando CUP,<ta_ms>,<v_x10>,<td_ms>.
+            Status S ganhou o 6º campo <modo> (1 = servindo copo; t = tempo do copo).
    Rev.36 – Curvas longas: a tabela enviada ao Hub tem no máximo 512 pontos (passo
             dt = máx(20 ms, T/511)); escrita BLE em blocos de 180 bytes (20 no iPhone)
             e tempo de confirmação proporcional ao tamanho → perfis de 14 s ou mais.
@@ -144,6 +150,9 @@
      PIN,OK | PIN,ERR
      ACK,CFG | ACK,PRF | ERR,PRF
      VER,<versão do firmware>
+     CUP,<ta_ms>,<v_x10>,<td_ms>   curva do copo: rampa acel. (ms), velocidade (0,1 RPM),
+                   rampa desacel. (ms) → ACK,CUP. DOSE usa esta curva até o alvo exato.
+     S,<estado>,<rpm_x10>,<pos>,<t_ms>,<fc>,<modo>   modo 1 = servindo copo (t desde o início do copo)
    Wi-Fi do Hub (Rev.34)
      App → Hub : WIFI,<ssid_b64>,<senha_b64>   (Base64 de UTF-8; SSID vazio = apagar)
      Hub → App : ACK,WIFI | ERR,WIFI
@@ -422,7 +431,22 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
       <button class="btn g-green" id="bTiCalc" style="height:46px;font-size:14px">↻ Recalcular tempo</button>
     </div>
     <div id="tiInfo" style="font-size:12px;color:var(--mut)">Curso ainda não ensinado.</div>
+  </div>
 
+  <div class="card" id="cupCard" style="display:flex;flex-direction:column;gap:10px;border:1px solid rgba(255,111,145,.4)">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+      <span style="font-size:18px;font-weight:700">Curva do copo <span style="font-weight:400;font-size:13px;color:var(--mut)">(venda)</span></span>
+      <span class="lbl" id="cupPpc">—</span>
+    </div>
+    <div style="font-size:12px;color:var(--mut);line-height:1.4">Usada em <b style="color:var(--tx)">Servir 1 copo</b> e nas vendas, igual para todos os copos. O <b style="color:var(--tx)">tempo em velocidade constante</b> é calculado para entregar exatamente 1 copo.</div>
+    <svg id="cupChart" style="width:100%;height:160px;display:block"></svg>
+    <div class="row">
+      <div class="field"><span class="lbl">Rampa acel.</span><div class="unit"><input class="f" id="cupTa" type="number" step="0.05" min="0.05" inputmode="decimal"><i>s</i></div></div>
+      <div class="field"><span class="lbl">Velocidade</span><div class="unit"><input class="f" id="cupV" type="number" step="5" min="5" inputmode="decimal"><i>RPM</i></div></div>
+      <div class="field"><span class="lbl">Rampa desacel.</span><div class="unit"><input class="f" id="cupTd" type="number" step="0.05" min="0.05" inputmode="decimal"><i>s</i></div></div>
+    </div>
+    <div style="font-size:12px;color:var(--mut)" id="cupSum"></div>
+  </div>
  </div>
 </section>
 
@@ -527,7 +551,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 
 <script>
 'use strict';
-const APP_REV = 'Rev.36';
+const APP_REV = 'Rev.37';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = /iPhone|iPad|iPod/.test(navigator.userAgent) ? 20 : 180;  // bytes por escrita BLE (iPhone/Bluefy: 20)
@@ -548,14 +572,16 @@ function toast(m){ const t=$('toast'); t.textContent=m; t.classList.add('show');
 
 /* ═════════════ PERFIS ═════════════ */
 function linearPts(T,r,v){ const p=[{t:0,v:0},{t:r,v}]; const n=4; for(let i=1;i<=n;i++) p.push({t:+(r+(T-r)*i/n).toFixed(3),v}); return p; }
-function defProfile(){ return { ttot:3, ramp:0.4, vsub:150, comp:40, vman:150, micro:8, amax:1500, vscale:200, pts:linearPts(3,0.4,150) }; }
+function defCup(){ return { ta:0.3, v:120, td:0.3 }; }
+function defProfile(){ return { ttot:3, ramp:0.4, vsub:150, comp:40, vman:150, micro:8, amax:1500, vscale:200, pts:linearPts(3,0.4,150), cup:defCup() }; }
 /* limite do hardware: LEDC 12 bits do Módulo (ESP32-S2) gera até ~4880 Hz de STEP; teto operacional 180 RPM */
 const VMAX_ABS=180, STEP_HZ_MAX=4880;
 function vmax(p=P()){ return Math.min(VMAX_ABS, Math.floor(STEP_HZ_MAX*60/(200*p.micro))); }
 function enforceLimits(p){ if(![1,2,4,8,16].includes(+p.micro)) p.micro=8; const m=vmax(p);
-  p.vsub=Math.min(p.vsub,m); p.vman=Math.min(p.vman,m); p.pts.forEach(q=>q.v=Math.min(q.v,m)); if(p.vscale<50) p.vscale=50; }
+  p.vsub=Math.min(p.vsub,m); p.vman=Math.min(p.vman,m); p.pts.forEach(q=>q.v=Math.min(q.v,m)); if(p.vscale<50) p.vscale=50; if(p.cup) p.cup.v=Math.min(p.cup.v,m); }
 let profiles = store.get('atl_profiles', null) || { A:defProfile(), B:defProfile(), C:defProfile() };
 Object.values(profiles).forEach(enforceLimits);
+Object.values(profiles).forEach(p=>{ if(!p.cup) p.cup=defCup(); });
 let cur = store.get('atl_cur','A'); if(!profiles[cur]) cur=Object.keys(profiles)[0];
 let sentSig = ''; // não persiste: o Device pode ter reiniciado → reenvia sempre ao abrir/conectar
 const P = () => profiles[cur];
@@ -598,7 +624,7 @@ function upTime(p=P()){
   const dAcc=v*v/a; // aceleração + desaceleração
   return rev>=dAcc ? 2*v/a+(rev-dAcc)/v : 2*Math.sqrt(rev/a);
 }
-function sig(p=P()){ return JSON.stringify([p.ttot,p.ramp,p.vsub,p.comp,p.vman,p.micro,p.amax,p.pts,store.get('atl_price',12),store.get('atl_mq',null)]); }
+function sig(p=P()){ return JSON.stringify([p.ttot,p.ramp,p.vsub,p.comp,p.vman,p.micro,p.amax,p.pts,p.cup,store.get('atl_price',12),store.get('atl_mq',null)]); }
 
 /* ═════════════ GRÁFICO ═════════════ */
 const svg=$('chart'); let sel=3, CH={W:340,H:240,L:40,R:12,T:12,B:30};
@@ -771,7 +797,7 @@ let pinResolve=null, ackWait={};
 function handleLine(l){
   const a=l.split(',');
   switch(a[0]){
-    case 'S': onStatus(+a[1],+a[2]/10,+a[3],+a[4],+a[5]); break;
+    case 'S': onStatus(+a[1],+a[2]/10,+a[3],+a[4],+a[5],+(a[6]||0)); break;
     case 'PIN': if(a[1]==='OK'){ authed=true; onAuthed(); } else { authed=false; toast('PIN incorreto'); showPin(true); forgetPin(); } break;
     case 'ACK': if(ackWait[a[1]]) { ackWait[a[1]](true); delete ackWait[a[1]]; } break;
     case 'ERR': if(a[1]==='BUSY'){ toast('Máquina em uso por outro aparelho'); showBusy('Bluetooth'); setTimeout(()=>{ try{ if(dev&&dev.gatt.connected) dev.gatt.disconnect(); }catch(e){} },100); break; }
@@ -862,6 +888,10 @@ async function sendProfile(){
     const prfAck=waitAck('PRF',10000+Math.ceil(line.length/CHUNK)*120);  // tempo cresce com o tamanho da curva
     await send(line);
     const r2=await prfAck;
+    const c=cupOf(p), cupAck=waitAck('CUP');
+    await send(`CUP,${Math.round(c.ta*1000)},${Math.round(c.v*10)},${Math.round(c.td*1000)}`);
+    const r3=await cupAck;
+    if(r3===null && r1!==null && r2!==null) toast('O Hub não confirmou a curva do copo (firmware antigo?)');
     if(r1===false||r2===false){ toast('Equipamento recusou o perfil'); return false; }
     if(r1===null||r2===null){ toast('Sem confirmação do Hub'); return false; }
     sentSig=sig(p)+'|'+cur; stroke=physStroke(p); updateDirty(); toast(`Perfil ${cur} enviado ✓ (${v.length} pontos)`); return true;
@@ -874,11 +904,11 @@ function updateDirty(){ $('dirtyWarn').style.visibility = online()&&isDirty() ? 
 /* ═════════════ OPERAÇÃO ═════════════ */
 const ST_NAME=['PARADO','▼ DESCENDO','▲ SUBINDO','▲ MANUAL','▼ MANUAL','EMERGÊNCIA'];
 let lastSt={st:0,rpm:0,pos:0,t:0,fc:0}, stroke=1, rotA=0, rotLast=performance.now();
-function onStatus(st,rpm,pos,tms,fc){
-  lastSt={st,rpm,pos,t:tms,fc};
+function onStatus(st,rpm,pos,tms,fc,mode=0){
+  lastSt={st,rpm,pos,t:tms,fc,mode};
   if(demo && st===0) estadoPub(pos);
   const chip=$('stChip'); chip.textContent=ST_NAME[st]||'—'+(st===1?'':'');
-  if(st===1) chip.textContent='▼ DESCENDO · Perfil '+cur;
+  if(st===1) chip.textContent=mode===1?'▼ SERVINDO 1 COPO':'▼ DESCENDO · Perfil '+cur;
   chip.className='chip'+(st>=1&&st<=4?' on':''); chip.style.background=st===5?'rgba(229,72,77,.2)':''; chip.style.color=st===5?'#ff8f92':'';
   $('vRpm').textContent=Math.round(rpm); $('svRpm').textContent=Math.round(rpm)+' RPM';
   $('vPos').textContent=fmtInt(pos);
@@ -886,11 +916,12 @@ function onStatus(st,rpm,pos,tms,fc){
   $('svPct').textContent=Math.round(Math.max(0,pos/Math.max(stroke,1))*100)+'%';
   const ext=Math.max(0,Math.min(frac,1))*80;
   $('svRod').setAttribute('height',4+ext); $('svCap').setAttribute('y',148+ext); $('svBar').setAttribute('y2',152+ext);
-  const T=P().ttot, tt=tms/1000;
+  const cp=mode===1?cupPlan():null, T=cp?cp.T:P().ttot, tt=tms/1000;
   $('vT').textContent=fmt(tt)+' s'; $('tNow').textContent='t = '+fmt(tt)+' s';
   $('tBar').style.width=(st===1?clamp(tt/T,0,1)*100:st===2?clamp(pos/Math.max(stroke,1),0,1)*100:0)+'%';
   $('vFc').textContent=(fc&1)?'TOPO':(fc&2)?'FUNDO':'OK'; $('vFc').style.color=(fc&3)?'var(--warn)':'var(--ok)';
-  const nt = st===1 ? tt : -1; if(nt!==nowT){ nowT=nt; if(curSec==='pf') drawChart(); }
+  const nt = st===1&&mode!==1 ? tt : -1; if(nt!==nowT){ nowT=nt; if(curSec==='pf') drawChart(); }
+  const cn = st===1&&mode===1 ? tt : -1; if(cn!==cupNow||cn>=0){ cupNow=cn; if(curSec==='pf') drawCup(); }
   miniCursor(st,rpm,tt); if(curSec==='mq') updAvail(); if(curSec==='pf') $('tiPos').textContent='posição: '+fmtInt(pos)+' passos';
   const ba=$('bAuto');
   const bu=$('bUpAuto'), busy=(st===1||st===2);
@@ -903,6 +934,51 @@ function onStatus(st,rpm,pos,tms,fc){
   be.innerHTML = st===5 ? '↻&nbsp; REARMAR' : '■&nbsp; PARADA DE EMERGÊNCIA';
 }
 /* ═════════════ TEACH IN ═════════════ */
+/* ═════════════ CURVA DO COPO (Rev.37) ═════════════
+   trapézio: rampa de aceleração (ta) · velocidade constante (v) · rampa de desaceleração (td).
+   O tempo constante sai do volume: passos/copo = Teach In × copo ÷ reservatório.
+   Se as rampas sozinhas já passam do copo, vira triângulo (pico menor, mesmas acelerações) —
+   exatamente o que o Módulo faz. */
+function cupOf(p=P()){ if(!p.cup) p.cup=defCup(); return p.cup; }
+function cupPlan(p=P()){
+  const c=cupOf(p), sp=spr(p), ppc=doseSteps(); if(!ppc) return null;
+  const rev=ppc/sp, vps=c.v/60, a1=vps/c.ta, a2=vps/c.td;
+  let tc=rev/vps-(c.ta+c.td)/2, vpk=c.v, ta=c.ta, td=c.td, tri=false;
+  if(tc<0){ tri=true; tc=0; const vp=Math.sqrt(2*rev/(1/a1+1/a2)); vpk=vp*60; ta=vp/a1; td=vp/a2; }
+  return {ppc, rev, tc, vpk, ta, td, T:ta+tc+td, tri, accOk: c.v/c.ta<=p.amax && c.v/c.td<=p.amax};
+}
+let cupNow=-1;
+function drawCup(){
+  const el=$('cupChart'); if(!el) return; const p=P(), c=cupOf(p), pl=cupPlan(p);
+  const W=el.clientWidth||340, H=el.clientHeight||160, L=36, Rr=10, Tp=10, B=26; el.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  ['cupTa','cupV','cupTd'].forEach((id,i)=>{ if(document.activeElement!==$(id)) $(id).value=[c.ta,c.v,c.td][i]; });
+  if(!pl){ el.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#8b98a5" font-size="12" text-anchor="middle">Faça o Teach In para calcular o copo</text>`; $('cupPpc').textContent='—'; $('cupSum').textContent=''; return; }
+  const T=pl.T, vs=Math.max(40,Math.ceil(Math.max(c.v,pl.vpk)*1.25/40)*40);
+  const X=t=>L+t/T*(W-L-Rr), Y=v=>H-B-v/vs*(H-Tp-B);
+  let g='';
+  g+=`<rect x="${X(0)}" y="${Tp}" width="${X(pl.ta)-X(0)}" height="${H-Tp-B}" fill="rgba(245,166,35,.13)"/>`;
+  g+=`<rect x="${X(pl.ta+pl.tc)}" y="${Tp}" width="${X(T)-X(pl.ta+pl.tc)}" height="${H-Tp-B}" fill="rgba(255,111,145,.13)"/>`;
+  for(let k=0;k<=4;k++){ const v=vs*k/4; g+=`<line x1="${L}" x2="${W-Rr}" y1="${Y(v)}" y2="${Y(v)}" stroke="#2e3a47" stroke-width="${k?0.6:1}"/><text x="${L-5}" y="${Y(v)+3}" fill="#8b98a5" font-size="9" text-anchor="end">${Math.round(v)}</text>`; }
+  for(let k=0;k<=4;k++){ const t=T*k/4; g+=`<text x="${X(t)}" y="${H-B+13}" fill="#8b98a5" font-size="9" text-anchor="middle">${fmt(t,2)}</text>`; }
+  g+=`<text x="${(L+W-Rr)/2}" y="${H-2}" fill="#8b98a5" font-size="9" text-anchor="middle">tempo do copo (s)</text>`;
+  const pts=[[0,0],[pl.ta,pl.vpk],[pl.ta+pl.tc,pl.vpk],[T,0]].map(([t,v])=>`${X(t).toFixed(1)} ${Y(v).toFixed(1)}`);
+  g+=`<path d="M${pts.join('L')}Z" fill="rgba(255,111,145,.14)"/><path d="M${pts.join('L')}" fill="none" stroke="#FF6F91" stroke-width="2.5" stroke-linejoin="round"/>`;
+  g+=`<text x="${(X(0)+X(pl.ta))/2}" y="${Tp+11}" fill="#f5a623" font-size="8.5" text-anchor="middle" font-weight="700">ACEL.</text>`;
+  if(pl.tc>0) g+=`<text x="${(X(pl.ta)+X(pl.ta+pl.tc))/2}" y="${Y(pl.vpk)-5}" fill="#FF6F91" font-size="8.5" text-anchor="middle" font-weight="700">${Math.round(pl.vpk)} RPM · ${fmt(pl.tc,2)} s</text>`;
+  g+=`<text x="${(X(pl.ta+pl.tc)+X(T))/2}" y="${Tp+11}" fill="#FF6F91" font-size="8.5" text-anchor="middle" font-weight="700">DESACEL.</text>`;
+  if(cupNow>=0){ const t=clamp(cupNow,0,T), x=X(t), vP=t<pl.ta?pl.vpk*t/pl.ta:t<pl.ta+pl.tc?pl.vpk:Math.max(0,pl.vpk*(T-t)/pl.td);
+    g+=`<line x1="${x}" x2="${x}" y1="${Tp}" y2="${H-B}" stroke="#2ecc71" stroke-width="1.4"/><circle cx="${x}" cy="${Y(vP)}" r="4.5" fill="#2ecc71" stroke="#0f1419" stroke-width="1.5"/><circle cx="${x}" cy="${Y(lastSt.rpm)}" r="3" fill="#fff"/>`; }
+  el.innerHTML=g;
+  $('cupPpc').textContent=`${fmtInt(pl.ppc)} passos/copo`;
+  $('cupSum').innerHTML = `Copo: <b style="color:var(--tx)">${fmt(pl.T,2)} s</b> · ${fmt(pl.rev,2)} voltas`
+    + (pl.tri ? ` · <span style="color:var(--warn)">rampas longas para este volume: pico de ${Math.round(pl.vpk)} RPM, sem trecho constante</span>` : ` · constante ${fmt(pl.tc,2)} s`)
+    + (pl.accOk ? '' : ` · <span style="color:var(--red)">rampa acima da aceleração máx. (${fmtInt(p.amax)} RPM/s)</span>`);
+}
+[['cupTa','ta',0.05,5],['cupV','v',5,999],['cupTd','td',0.05,5]].forEach(([id,k,lo,hi])=>$(id).addEventListener('change',()=>{
+  const p=P(), c=cupOf(p); let v=parseFloat($(id).value); if(isNaN(v)){ drawCup(); return; }
+  if(k==='v') hi=vmax(p); c[k]=+clamp(v,lo,hi).toFixed(k==='v'?1:3); save(); drawCup(); try{ updMq(); }catch(e){}
+}));
+
 let tiEdited=false;
 let teach=store.get('atl_teach',null); // {steps, micro}
 function teachSteps(){ if(!teach) return 0; return teach.steps*(P().micro/teach.micro); } // converte se mudar o micropasso
@@ -945,17 +1021,21 @@ $('bTiCalc').onclick=()=>teachTime(false);
 /* gráfico em tempo real ao lado do êmbolo */
 const MC={x0:166,x1:328,y0:32,y1:220};
 let miniKey='';
-function miniDraw(){
-  const p=P(), f=pchip(p.pts), T=p.ttot, vs=p.vscale;
+function miniDraw(cupMode=false){
+  const p=P(); let f=pchip(p.pts), T=p.ttot, vs=p.vscale, rampT=p.ramp;
+  const pl=cupMode?cupPlan(p):null;
+  if(pl){ T=pl.T; rampT=pl.ta; f=t=>t<pl.ta?pl.vpk*t/pl.ta:t<pl.ta+pl.tc?pl.vpk:Math.max(0,pl.vpk*(T-t)/pl.td); }
   const X=t=>MC.x0+t/T*(MC.x1-MC.x0), Y=v=>MC.y1-clamp(v,0,vs*1.05)/vs*(MC.y1-MC.y0);
-  let g=`<rect x="${X(0)}" y="${MC.y0}" width="${X(p.ramp)-X(0)}" height="${MC.y1-MC.y0}" fill="rgba(245,166,35,.15)"/>`;
+  let g=`<rect x="${X(0)}" y="${MC.y0}" width="${X(rampT)-X(0)}" height="${MC.y1-MC.y0}" fill="rgba(245,166,35,.15)"/>`;
   for(let k=0;k<=4;k++){ const v=vs*k/4; g+=`<line x1="${MC.x0}" x2="${MC.x1}" y1="${Y(v)}" y2="${Y(v)}" stroke="#2e3a47" stroke-width="${k?0.6:1}"/><text x="${MC.x0-3}" y="${Y(v)+3}" fill="#8b98a5" font-size="7.5" text-anchor="end">${Math.round(v)}</text>`; }
   for(let k=0;k<=3;k++){ const t=T*k/3; g+=`<text x="${X(t)}" y="${MC.y1+11}" fill="#8b98a5" font-size="7.5" text-anchor="middle">${fmt(t,1)}</text>`; }
   g+=`<text x="${(MC.x0+MC.x1)/2}" y="${MC.y1+19}" fill="#8b98a5" font-size="7" text-anchor="middle">tempo (s)</text>`;
   let d='', a=`M${X(0)} ${Y(0)}`; const N=120;
   for(let i=0;i<=N;i++){ const t=T*i/N, x=X(t).toFixed(1), y=Y(Math.max(0,f(t))).toFixed(1); d+=(i?'L':'M')+x+' '+y; a+=`L${x} ${y}`; }
   a+=`L${X(T)} ${Y(0)}Z`;
-  g+=`<path d="${a}" fill="rgba(47,163,255,.12)"/><path d="${d}" fill="none" stroke="#2fa3ff" stroke-width="2" stroke-linejoin="round"/>`;
+  const lc=pl?'#FF6F91':'#2fa3ff';
+  g+=`<path d="${a}" fill="${pl?'rgba(255,111,145,.14)':'rgba(47,163,255,.12)'}"/><path d="${d}" fill="none" stroke="${lc}" stroke-width="2" stroke-linejoin="round"/>`;
+  if(pl) g+=`<text x="${MC.x1-2}" y="${MC.y0+9}" fill="#FF6F91" font-size="8" text-anchor="end">curva do copo</text>`;
   g+=`<line id="mcVsub" x1="${MC.x0}" x2="${MC.x1}" y1="${Y(p.vsub)}" y2="${Y(p.vsub)}" stroke="#2ecc71" stroke-dasharray="4 3" opacity="0"/>`;
   g+=`<text id="mcVsubT" x="${MC.x1-2}" y="${Y(p.vsub)-3}" fill="#2ecc71" font-size="8" text-anchor="end" opacity="0">subida ${Math.round(p.vsub)} RPM</text>`;
   g+=`<g id="mcCur" opacity="0"><line id="mcLine" y1="${MC.y0}" y2="${MC.y1}" stroke="#2ecc71" stroke-width="1.4"/><circle id="mcDot" r="4.5" fill="#2ecc71" stroke="#0f1419" stroke-width="1.5"/><circle id="mcReal" r="3" fill="#fff"/></g>`;
@@ -963,7 +1043,8 @@ function miniDraw(){
 }
 function refreshMini(){ miniKey=''; miniCursor(lastSt.st,lastSt.rpm,lastSt.t/1000); }
 function miniCursor(st,rpm,tt){
-  const k=sig()+'|'+cur; if(k!==miniKey){ miniKey=k; miniDraw(); }
+  const cupMode=st===1&&lastSt.mode===1;
+  const k=sig()+'|'+cur+'|'+cupMode; if(k!==miniKey){ miniKey=k; miniDraw(cupMode); }
   const show=st===1, up=st===2;
   $('mcCur').setAttribute('opacity',show?1:0);
   $('mcVsub').setAttribute('opacity',up?1:0); $('mcVsubT').setAttribute('opacity',up?1:0);
@@ -1152,7 +1233,7 @@ function simCmd(line){
     case 'DOSE': { if(!sim.tab||sim.st===5) break; const c=sim.cfg||{}, tot=sim.cum[sim.cum.length-1];
       const curso=c.curso>0?c.curso:tot, ppc=curso*(c.cup||150)/(c.res||2000);
       if(Math.floor((curso-sim.pos)/ppc+1e-6)<1){ setTimeout(()=>handleLine('ERR,DOSE,VAZIO'),40); break; }
-      sim.st=1; sim.t=simSinv(Math.max(0,sim.pos)); sim.doseEnd=Math.min(curso,sim.pos+ppc); break; }
+      sim.st=1; sim.t=0; sim.doseEnd=Math.min(curso,sim.pos+ppc); break; }
     case 'STOP': if(sim.st===1||sim.st===2){ sim.st=0; sim.t=0; } break;
     case 'ESTOP': sim.st=5; sim.rpm=0; break;
     case 'RESET': if(sim.st===5) sim.st=0; break;
@@ -1163,6 +1244,7 @@ function simCmd(line){
       if(!ss){ setTimeout(()=>handleLine('WIFI,DESCONECTADO'),200); break; }
       setTimeout(()=>handleLine('WIFI,CONECTANDO'),200);
       setTimeout(()=>{ if(demo) handleLine('WIFI,'+(pw.length===0||pw.length>=8?'CONECTADO':'ERRO,SENHA')); },2200); break; }
+    case 'CUP': sim.cup={ta:+a[1]/1000,v:+a[2]/10,td:+a[3]/1000}; setTimeout(()=>handleLine('ACK,CUP'),40); break;
     case 'JOG': { const d=+a[1]; if(sim.st===5) break; sim.jog={dir:d,rpm:+a[2]/10,last:performance.now()}; if(d) sim.st=d>0?3:4; break; }
   }
 }
@@ -1181,7 +1263,14 @@ function simTick(){
   const dt=DT_MS/1000, c=sim.cfg||{micro:P().micro,vsub:P().vsub,comp:P().comp,amax:P().amax}, sp=BASE_STEPS*c.micro, a=c.amax;
   const toward=(tgt)=>{ const d=tgt-sim.rpm, m=a*dt; sim.rpm+= Math.abs(d)<=m?d:Math.sign(d)*m; };
   const maxPos=DEMO_CURSO_VOLTAS*sp; // fim de curso físico simulado (fixo)
-  if(sim.st===1){ // descida pela tabela, a partir da posição atual
+  if(sim.st===1 && sim.doseEnd!=null){ // venda: curva do copo (trapézio) até o alvo exato
+    if(sim.dir<0){ sim.rpm=0; sim.dir=1; }
+    const cu=sim.cup||cupOf(P());
+    if(sim.pos>=sim.doseEnd){ sim.pos=sim.doseEnd; sim.rpm=0; sim.st=0; sim.doseEnd=null; sim.t=0; }
+    else{ sim.t+=dt; const rem=(sim.doseEnd-sim.pos)/sp, aDec=cu.v/cu.td;
+      let v=Math.min(cu.v, cu.v*sim.t/cu.ta); v=Math.min(v, Math.sqrt(Math.max(0,2*(aDec/60)*rem))*60); if(rem>0) v=Math.max(v,2);
+      sim.rpm=v; sim.pos=Math.min(sim.doseEnd, sim.pos+v/60*sp*dt); }
+  } else if(sim.st===1){ // descida pela tabela, a partir da posição atual
     if(sim.dir<0){ sim.rpm=0; sim.dir=1; }
     const T=(sim.tab.length-1)*sim.dt/1000;
     if(sim.doseEnd!=null && sim.pos>=sim.doseEnd){ sim.pos=sim.doseEnd; sim.rpm=0; sim.st=0; sim.doseEnd=null; sim.t=0; }
@@ -1207,7 +1296,7 @@ function simTick(){
     if(sim.rpm<=0.01 && (wd||!sim.jog.dir)){ sim.rpm=0; sim.st=0; }
   } else if(sim.st===0){ toward(0); sim.pos=clamp(sim.pos+sim.dir*sim.rpm/60*sp*dt,0,maxPos); }
   const fc=(sim.pos<=0.5?1:0)|(sim.pos>=maxPos-0.5?2:0);
-  handleLine(`S,${sim.st},${Math.round(sim.rpm*10)},${Math.round(sim.pos)},${Math.round(sim.st===1?sim.t*1000:0)},${fc}`);
+  handleLine(`S,${sim.st},${Math.round(sim.rpm*10)},${Math.round(sim.pos)},${Math.round(sim.st===1?sim.t*1000:0)},${fc},${sim.st===1&&sim.doseEnd!=null?1:0}`);
 }
 
 /* ═════════════ MÁQUINA: reservatório, copo, preço ═════════════ */
@@ -1225,7 +1314,9 @@ function updMq(){
   if(!ts){ ['mSpm','mSpc','mRpc','mMpv'].forEach(i=>$(i).textContent='—'); $('mCheck').textContent=''; return; }
   const spm=ts/mq.res, spc=spm*mq.cup, sp=spr();
   $('mSpm').textContent=fmt(spm,1); $('mSpc').textContent=fmtInt(spc); $('mRpc').textContent=fmt(spc/sp); $('mMpv').textContent=fmt(sp/spm,1);
-  // tempo de cada copo ao longo do reservatório (varia com o trecho da curva)
+  { const pl=cupPlan(); $('mCheck').innerHTML = pl ? `Tempo de cada copo: <b style="color:var(--tx)">${fmt(pl.T,2)} s</b> (curva do copo, igual em todas as vendas).` : ''; }
+  return;
+  // (antes da Rev.37: tempo de cada copo pelo trecho da curva completa)
   const v=table(P()), dt=DT_MS/1000, cum=[0]; for(let i=1;i<v.length;i++) cum.push(cum[i-1]+(v[i-1]+v[i])/2/60*dt*sp);
   const tot=cum[cum.length-1], tOf=x=>{ let i=cum.findIndex(c=>c>=x); if(i<1) return i===0?0:(v.length-1)*dt; return (i-1+(x-cum[i-1])/Math.max(1e-9,cum[i]-cum[i-1]))*dt; };
   const nP=porcoes(), tc=[]; for(let k=0;k<nP;k++){ const a=tot*k*mq.cup/mq.res, b=tot*(k+1)*mq.cup/mq.res; tc.push(tOf(b)-tOf(a)); }
@@ -1262,7 +1353,7 @@ $('cPrice').addEventListener('change',()=>{ const v=parseFloat($('cPrice').value
 let curSec='op';
 function nav(s){ curSec=s; document.querySelectorAll('section').forEach(e=>e.classList.toggle('on',e.id==='sec-'+s));
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.sec===s));
-  if(s==='pf') requestAnimationFrame(drawChart);
+  if(s==='pf') requestAnimationFrame(()=>{ drawChart(); drawCup(); });
   if(s==='op') refreshMini();
   if(s==='mq') updMq(); }
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>nav(b.dataset.sec));
@@ -1286,7 +1377,7 @@ window.addEventListener('resize',fit); window.addEventListener('orientationchang
 if(window.visualViewport) visualViewport.addEventListener('resize',fit);
 
 function physStroke(p=P()){ try{ const t=teachSteps(); if(t>0) return t; }catch(e){} return descSteps(p); } // curso físico (Teach In) ou, sem ele, o da curva
-function refreshAll(){ try{ refreshMini(); }catch(e){} try{ updMq(); }catch(e){} updTeach(); renderPresets(); loadFields(); drawChart(); updSummary(); updTimeLbl(); updateDirty(); if(!online()||lastSt.st===0) { stroke=physStroke(); } }
+function refreshAll(){ try{ refreshMini(); }catch(e){} try{ drawCup(); }catch(e){} try{ updMq(); }catch(e){} updTeach(); renderPresets(); loadFields(); drawChart(); updSummary(); updTimeLbl(); updateDirty(); if(!online()||lastSt.st===0) { stroke=physStroke(); } }
 $('verLbl').textContent='Android: Chrome/Edge · iPhone: app Bluefy · App '+APP_REV;
 fit(); refreshAll(); updMq(); updHeader(); onStatus(0,0,0,0,0);
 
