@@ -82,6 +82,8 @@
             com botão próprio "Salvar Wi-Fi no Hub" (WIFI,<ssid_b64>,<senha_b64>) e
             estado do Wi-Fi informado pelo Hub. Senha só na memória (nunca no
             localStorage); apagada após o envio e ao desconectar.
+   Rev.41 – Velocidade máxima 125 RPM (acima disso o motor perdia passo): curva, copo,
+            subida e manual limitados; padrões 125 RPM. O Módulo para 1 s antes de inverter.
    Rev.40 – Curva do copo no topo da aba Perfil (acima do perfil de descida).
    Rev.39 – Curva do copo arrastável: bolinhas no fim da aceleração, no início da desaceleração
             e no fim do copo (como no gráfico do perfil de descida).
@@ -559,7 +561,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 
 <script>
 'use strict';
-const APP_REV = 'Rev.40';
+const APP_REV = 'Rev.41';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = /iPhone|iPad|iPod/.test(navigator.userAgent) ? 20 : 180;  // bytes por escrita BLE (iPhone/Bluefy: 20)
@@ -581,15 +583,15 @@ function toast(m){ const t=$('toast'); t.textContent=m; t.classList.add('show');
 /* ═════════════ PERFIS ═════════════ */
 function linearPts(T,r,v){ const p=[{t:0,v:0},{t:r,v}]; const n=4; for(let i=1;i<=n;i++) p.push({t:+(r+(T-r)*i/n).toFixed(3),v}); return p; }
 function defCup(){ return { ta:0.3, T:1.0, td:0.3 }; }
-function defProfile(){ return { ttot:3, ramp:0.4, vsub:150, comp:40, vman:150, micro:8, amax:1500, vscale:200, pts:linearPts(3,0.4,150), cup:defCup() }; }
+function defProfile(){ return { ttot:3, ramp:0.4, vsub:125, comp:40, vman:125, micro:8, amax:1500, vscale:150, pts:linearPts(3,0.4,125), cup:defCup() }; }
 /* limite do hardware: LEDC 12 bits do Módulo (ESP32-S2) gera até ~4880 Hz de STEP; teto operacional 180 RPM */
-const VMAX_ABS=180, STEP_HZ_MAX=4880;
+const VMAX_ABS=125, STEP_HZ_MAX=4880;  // 125 RPM: limite medido no ensaio (150 perdia passo)
 function vmax(p=P()){ return Math.min(VMAX_ABS, Math.floor(STEP_HZ_MAX*60/(200*p.micro))); }
 function enforceLimits(p){ if(![1,2,4,8,16].includes(+p.micro)) p.micro=8; const m=vmax(p);
   p.vsub=Math.min(p.vsub,m); p.vman=Math.min(p.vman,m); p.pts.forEach(q=>q.v=Math.min(q.v,m)); if(p.vscale<50) p.vscale=50; }
 let profiles = store.get('atl_profiles', null) || { A:defProfile(), B:defProfile(), C:defProfile() };
 Object.values(profiles).forEach(enforceLimits);
-Object.values(profiles).forEach(p=>{ if(!p.cup||!(p.cup.T>0)) p.cup=defCup(); });
+Object.values(profiles).forEach(p=>{ if(!p.cup||!(p.cup.T>0)) p.cup=defCup(); enforceLimits(p); });  // aplica o limite de 125 RPM aos perfis salvos
 let cur = store.get('atl_cur','A'); if(!profiles[cur]) cur=Object.keys(profiles)[0];
 let sentSig = ''; // não persiste: o Device pode ter reiniciado → reenvia sempre ao abrir/conectar
 const P = () => profiles[cur];
