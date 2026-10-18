@@ -82,6 +82,8 @@
             com botão próprio "Salvar Wi-Fi no Hub" (WIFI,<ssid_b64>,<senha_b64>) e
             estado do Wi-Fi informado pelo Hub. Senha só na memória (nunca no
             localStorage); apagada após o envio e ao desconectar.
+   Rev.35 – Wi-Fi: o Hub informa o motivo do erro (WIFI,ERRO,SENHA|REDE|TEMPO) e o app
+            mostra a causa (senha incorreta, rede não encontrada/5 GHz, tempo esgotado).
   ─────────────────────────────────────────────────────────────────────────────
   PROTOCOLO BLE (para o firmware do Hub)
    Serviço Nordic UART (NUS)  6e400001-b5a3-f393-e0a9-e50e24dcca9e
@@ -142,7 +144,8 @@
    Wi-Fi do Hub (Rev.34)
      App → Hub : WIFI,<ssid_b64>,<senha_b64>   (Base64 de UTF-8; SSID vazio = apagar)
      Hub → App : ACK,WIFI | ERR,WIFI
-                 WIFI,<CONECTADO|CONECTANDO|DESCONECTANDO|DESCONECTADO|ERRO>
+                 WIFI,<CONECTADO|CONECTANDO|DESCONECTANDO|DESCONECTADO|ERRO>[,<motivo>]
+                 motivo (só com ERRO): SENHA · REDE (não achou; só 2,4 GHz) · TEMPO
 -->
 <html lang="pt-BR">
 <head>
@@ -521,7 +524,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 
 <script>
 'use strict';
-const APP_REV = 'Rev.34';
+const APP_REV = 'Rev.35';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = 20;      // bytes por escrita BLE
@@ -768,7 +771,7 @@ function handleLine(l){
     case 'ERR': if(a[1]==='BUSY'){ toast('Máquina em uso por outro aparelho'); showBusy('Bluetooth'); setTimeout(()=>{ try{ if(dev&&dev.gatt.connected) dev.gatt.disconnect(); }catch(e){} },100); break; }
       if(ackWait[a[1]]) { ackWait[a[1]](false); delete ackWait[a[1]]; } toast('Erro do Hub: '+a.slice(1).join(',')); break;
     case 'VER': fwVer=a[1]||''; updHeader(); break;
-    case 'WIFI': wfSetState(a[1]||''); break;
+    case 'WIFI': wfSetState(a[1]||'',a[2]||''); break;
   }
 }
 function waitAck(tag,ms=4000){ return new Promise(res=>{ ackWait[tag]=res; setTimeout(()=>{ if(ackWait[tag]){ delete ackWait[tag]; res(null); } },ms); }); }
@@ -1025,10 +1028,10 @@ window.addEventListener('blur',jogStop);
    A senha é apagada do campo depois do envio confirmado e ao desconectar. */
 const b64enc=s=>{ const u=new TextEncoder().encode(s); let b=''; u.forEach(x=>b+=String.fromCharCode(x)); return btoa(b); };
 const b64dec=s=>{ try{ const b=atob(s); return new TextDecoder().decode(Uint8Array.from(b,c=>c.charCodeAt(0))); }catch(e){ return ''; } };
-const WF_TXT={CONECTADO:['Conectado','var(--ok)'],CONECTANDO:['Conectando…','var(--warn)'],DESCONECTANDO:['Desconectando…','var(--warn)'],DESCONECTADO:['Desconectado','var(--mut)'],ERRO:['Erro ao conectar','var(--red)']};
-let wfState='', wfBusy=false;
-function wfSetState(st){ wfState=st; wfLock(); }
-function wfReset(){ wfState=''; $('wfPass').value=''; $('wfPass').type='password'; }
+const WF_TXT={CONECTADO:['Conectado','var(--ok)'],CONECTANDO:['Conectando…','var(--warn)'],DESCONECTANDO:['Desconectando…','var(--warn)'],DESCONECTADO:['Desconectado','var(--mut)'],ERRO:['Erro no Wi-Fi','var(--red)']};
+let wfState='', wfWhy='', wfBusy=false;
+function wfSetState(st,why){ wfState=st; wfWhy=st==='ERRO'?why:''; wfLock(); }
+function wfReset(){ wfState=''; wfWhy=''; $('wfPass').value=''; $('wfPass').type='password'; }
 function wfLock(){
   const on=online();
   ['wfSsid','wfPass','wfEye'].forEach(id=>$(id).disabled=!on);
@@ -1039,7 +1042,11 @@ function wfLock(){
   else { el.textContent='Wi-Fi: sem informação'; el.style.color='var(--mut)'; }
   $('wfHint').textContent = !on ? 'Conecte e pareie um Hub por BLE ou ative o Modo demonstração para editar.'
     : wfState==='CONECTADO' ? 'O Hub está conectado à internet.'
-    : wfState==='ERRO' ? 'O Hub não conseguiu entrar na rede. Confira o nome e a senha.'
+    : wfState==='ERRO' ? (wfWhy==='SENHA' ? 'Senha do Wi-Fi incorreta. Digite de novo e salve.'
+        : wfWhy==='REDE' ? 'Rede não encontrada. Confira o nome (maiúsculas contam) — o Hub só usa redes de 2,4 GHz.'
+        : wfWhy==='TEMPO' ? 'O Hub não entrou na rede em 25 s. Confira nome, senha e se a rede é 2,4 GHz. Ele segue tentando.'
+        : 'O Hub não conseguiu entrar na rede. Confira o nome e a senha.')
+    : wfState==='CONECTANDO' ? 'O Hub está entrando na rede…'
     : 'A senha não fica salva neste aparelho. O Hub guarda a rede e reconecta sozinho ao ligar.';
 }
 $('wfEye').onclick=()=>{ const p=$('wfPass'); p.type=p.type==='password'?'text':'password'; };
@@ -1148,7 +1155,7 @@ function simCmd(line){
       setTimeout(()=>handleLine('ACK,WIFI'),80);
       if(!ss){ setTimeout(()=>handleLine('WIFI,DESCONECTADO'),200); break; }
       setTimeout(()=>handleLine('WIFI,CONECTANDO'),200);
-      setTimeout(()=>{ if(demo) handleLine('WIFI,'+(pw.length===0||pw.length>=8?'CONECTADO':'ERRO')); },2200); break; }
+      setTimeout(()=>{ if(demo) handleLine('WIFI,'+(pw.length===0||pw.length>=8?'CONECTADO':'ERRO,SENHA')); },2200); break; }
     case 'JOG': { const d=+a[1]; if(sim.st===5) break; sim.jog={dir:d,rpm:+a[2]/10,last:performance.now()}; if(d) sim.st=d>0?3:4; break; }
   }
 }
