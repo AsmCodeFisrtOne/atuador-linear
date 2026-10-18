@@ -82,6 +82,10 @@
             com botão próprio "Salvar Wi-Fi no Hub" (WIFI,<ssid_b64>,<senha_b64>) e
             estado do Wi-Fi informado pelo Hub. Senha só na memória (nunca no
             localStorage); apagada após o envio e ao desconectar.
+   Rev.42 – Tempo total da descida recalculado sozinho pelo Teach In a cada ajuste da curva
+            (botão "Recalcular tempo" removido; campo de tempo fica calculado quando há Teach In).
+            Removido "Reservatório cheio": subir ao topo já libera as doses. Barra de rolagem
+            na lateral direita para rolar sem tocar nos botões.
    Rev.41 – Velocidade máxima 125 RPM (acima disso o motor perdia passo): curva, copo,
             subida e manual limitados; padrões 125 RPM. O Módulo para 1 s antes de inverter.
    Rev.40 – Curva do copo no topo da aba Perfil (acima do perfil de descida).
@@ -212,6 +216,14 @@ header{display:flex;align-items:center;justify-content:space-between;padding:10p
 .dot.on{background:var(--ok);box-shadow:0 0 6px var(--ok)}
 .dot.demo{background:var(--warn);box-shadow:0 0 6px var(--warn)}
 main{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+#app{position:relative}
+#app.rail main{padding-right:26px;scrollbar-width:none}
+#app.rail main::-webkit-scrollbar{display:none}
+#srail{position:absolute;right:0;width:30px;z-index:40;touch-action:none;display:none}
+#app.rail #srail{display:block}
+#srail::before{content:'';position:absolute;right:13px;top:6px;bottom:6px;width:4px;border-radius:2px;background:rgba(139,152,165,.18)}
+#srail .th{position:absolute;right:6px;width:18px;border-radius:9px;background:rgba(139,152,165,.5);border:1px solid rgba(255,255,255,.15);box-shadow:0 1px 4px rgba(0,0,0,.4)}
+#srail.on .th{background:rgba(47,163,255,.75)}
 section{display:none;padding:0 16px 20px;flex-direction:column;gap:12px;max-width:560px;margin:0 auto}
 section.on{display:flex}
 .card{background:var(--card);border-radius:16px;padding:12px}
@@ -303,6 +315,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
   </div>
 </header>
 
+<div id="srail"><div class="th"></div></div>
 <main>
 <!-- ═══════════════ OPERAÇÃO ═══════════════ -->
 <section id="sec-op" class="on">
@@ -436,7 +449,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
       <span style="font-size:18px;font-weight:700">Teach In</span>
       <span class="lbl" id="tiPos">posição: 0 passos</span>
     </div>
-    <div style="font-size:12px;color:var(--mut);line-height:1.4">1) Leve o êmbolo ao topo e toque <b style="color:var(--tx)">Definir TOPO</b> · 2) desça até o fim do curso e toque <b style="color:var(--tx)">Definir FUNDO</b> · o sistema calcula o <b style="color:var(--tx)">tempo total</b> mantendo a forma da curva.</div>
+    <div style="font-size:12px;color:var(--mut);line-height:1.4">1) Leve o êmbolo ao topo e toque <b style="color:var(--tx)">Definir TOPO</b> · 2) desça até o fim do curso e toque <b style="color:var(--tx)">Definir FUNDO</b> · o <b style="color:var(--tx)">tempo total</b> passa a ser recalculado sozinho a cada ajuste da curva, mantendo a forma.</div>
     <div class="row">
       <button class="btn sec jog" data-dir="1" style="height:70px"><span class="ar">▲</span>SUBIR<small>segure p/ acelerar</small></button>
       <button class="btn sec jog" data-dir="-1" style="height:70px"><span class="ar">▼</span>DESCER<small>segure p/ acelerar</small></button>
@@ -452,7 +465,6 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
     </div>
     <div class="card" style="background:var(--card2);padding:10px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px">
       <div class="kv"><b id="tiTot" style="font-size:22px;color:var(--acc)">—</b><span>tempo total</span></div>
-      <button class="btn g-green" id="bTiCalc" style="height:46px;font-size:14px">↻ Recalcular tempo</button>
     </div>
     <div id="tiInfo" style="font-size:12px;color:var(--mut)">Curso ainda não ensinado.</div>
   </div>
@@ -497,10 +509,9 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
     <div class="card" style="background:var(--card2);padding:10px 12px;display:flex;justify-content:space-around;text-align:center">
       <div class="kv" style="align-items:center"><b class="big" id="mAvail" style="color:var(--acc);height:auto;line-height:1.1">—</b><span>doses disponíveis agora</span></div>
     </div>
-    <div style="font-size:12px;color:var(--mut);line-height:1.45">1) Toque <b style="color:var(--tx)">Subir para reabastecer</b> — o êmbolo volta ao topo · 2) troque/encha o reservatório · 3) toque <b style="color:var(--tx)">Reservatório cheio</b>.</div>
+    <div style="font-size:12px;color:var(--mut);line-height:1.45">Toque <b style="color:var(--tx)">Subir para reabastecer</b>: o êmbolo volta ao topo e as doses são liberadas. Depois troque/encha o reservatório.</div>
     <div class="row">
       <button class="btn g-blue" id="bRefUp" style="flex:1;height:52px;font-size:15px">⤒ Subir para reabastecer</button>
-      <button class="btn g-green" id="bRefOk" style="flex:1;height:52px;font-size:15px">✓ Reservatório cheio</button>
     </div>
   </div>
 </section>
@@ -561,7 +572,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 
 <script>
 'use strict';
-const APP_REV = 'Rev.41';
+const APP_REV = 'Rev.42';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = /iPhone|iPad|iPod/.test(navigator.userAgent) ? 20 : 180;  // bytes por escrita BLE (iPhone/Bluefy: 20)
@@ -705,7 +716,7 @@ svg.addEventListener('pointermove',e=>{
   if(downXY) return;
   setPoint(drag,ct(x),cv(y)); drawChart(); updSummary();
 });
-const endDrag=()=>{ clearTimeout(lpT); if(drag>=0){ drag=-1; save(); updSummary(); } };
+const endDrag=()=>{ clearTimeout(lpT); if(drag>=0){ drag=-1; afterCurve(); } };
 svg.addEventListener('pointerup',endDrag); svg.addEventListener('pointercancel',endDrag);
 svg.addEventListener('contextmenu',e=>e.preventDefault());
 function addPoint(t,v){
@@ -713,20 +724,20 @@ function addPoint(t,v){
   if(t<=p.ramp+0.03 || t>=p.ttot-0.03){ toast('Adicione pontos depois da rampa'); return; }
   let k=pts.findIndex(q=>q.t>t); if(k<0) return;
   if(t-pts[k-1].t<0.03 || pts[k].t-t<0.03) return;
-  pts.splice(k,0,{t:+t.toFixed(3),v:+clamp(v,0,p.vscale).toFixed(1)}); sel=k; save(); drawChart(); updSummary(); toast('Ponto adicionado');
+  pts.splice(k,0,{t:+t.toFixed(3),v:+clamp(v,0,p.vscale).toFixed(1)}); sel=k; afterCurve(); toast('Ponto adicionado');
 }
 function removePoint(i){
   const p=P(); if(i<=1 || i===p.pts.length-1){ toast('Este ponto não pode ser removido'); return; }
   p.pts.splice(i,1); sel=Math.min(i,p.pts.length-1); if(navigator.vibrate) navigator.vibrate(30);
-  save(); drawChart(); updSummary(); toast('Ponto removido');
+  afterCurve(); toast('Ponto removido');
 }
 ['ptT','ptV'].forEach(id=>$(id).addEventListener('change',()=>{
-  const q=P().pts[sel]; setPoint(sel, parseFloat($('ptT').value)||q.t, parseFloat($('ptV').value)||0); save(); drawChart(); updSummary();
+  const q=P().pts[sel]; setPoint(sel, parseFloat($('ptT').value)||q.t, parseFloat($('ptV').value)||0); afterCurve();
 }));
 
 /* ═════════════ CAMPOS ═════════════ */
 const FIELDS={cTtot:'ttot',cRamp:'ramp',cVsub:'vsub',cComp:'comp',cVman:'vman',cMicro:'micro',cAmax:'amax',cVscale:'vscale'};
-function loadFields(){ const p=P(); for(const id in FIELDS) $(id).value=p[FIELDS[id]]; }
+function loadFields(){ const p=P(); for(const id in FIELDS) $(id).value=p[FIELDS[id]]; const tl=$('cTtot'); tl.readOnly=!!teach; tl.style.opacity=teach?.7:1; tl.title=teach?'calculado pelo Teach In':''; }
 function rescaleTime(oldT,oldR,newT,newR){
   const pts=P().pts, last=pts.length-1;
   pts[1].t=newR; pts[last].t=newT;
@@ -735,7 +746,7 @@ function rescaleTime(oldT,oldR,newT,newR){
 for(const id in FIELDS) $(id).addEventListener('change',()=>{
   const p=P(), k=FIELDS[id]; let v=parseFloat($(id).value);
   if(isNaN(v)){ loadFields(); return; }
-  if(k==='ttot'){ v=clamp(v,Math.max(0.5,p.ramp+0.2),120); rescaleTime(p.ttot,p.ramp,v,p.ramp); }
+  if(k==='ttot'){ if(teach){ loadFields(); toast('Tempo total calculado pelo Teach In'); return; } v=clamp(v,Math.max(0.5,p.ramp+0.2),120); rescaleTime(p.ttot,p.ramp,v,p.ramp); }
   if(k==='ramp'){ v=clamp(v,0.05,p.ttot-0.2); rescaleTime(p.ttot,p.ramp,p.ttot,v); }
   if(k==='vsub') v=clamp(v,1,vmax(p));
   if(k==='comp') v=Math.round(clamp(v,-100000,100000));
@@ -744,6 +755,7 @@ for(const id in FIELDS) $(id).addEventListener('change',()=>{
   if(k==='vscale'){ v=clamp(v,50,400); p.pts.forEach(q=>q.v=Math.min(q.v,v)); }
   p[k]=v; const before=JSON.stringify([p.vsub,p.vman,p.pts]); enforceLimits(p);
   if(k==='micro' && before!==JSON.stringify([p.vsub,p.vman,p.pts])) toast(`Velocidades limitadas a ${vmax(p)} RPM em 1/${p.micro}`);
+  if(k!=='vsub'&&k!=='comp'&&k!=='vman'&&k!=='amax') fitTeach(p);
   loadFields(); save(); drawChart(); updSummary(); updTimeLbl();
 });
 function updSummary(){
@@ -775,7 +787,7 @@ $('bLinear').onclick=()=>{ // restaura a curva de fábrica (como no início)
   const p=P(), d=defProfile();
   p.ttot=d.ttot; p.ramp=d.ramp; p.vscale=d.vscale; p.pts=d.pts;
   sel=1; save(); refreshAll();
-  if(teach){ teachTime(false); toast('Curva original restaurada · tempo ajustado ao Teach In'); } else toast('Curva original restaurada');
+  if(teach){ afterCurve(); toast('Curva original restaurada · tempo ajustado ao Teach In'); } else toast('Curva original restaurada');
 };
 
 /* ═════════════ BLE ═════════════ */
@@ -880,7 +892,7 @@ function updHeader(){
   ['bAuto','bTop','bBot'].forEach(id=>$(id).disabled=!online()); document.querySelectorAll('.jog').forEach(b=>b.disabled=!online()); $('bUpAuto').disabled=!online()||lastSt.st===1||lastSt.st===2;
   $('bSend').disabled=!online();
   wfLock();
-  ['mRes','mCup','cPrice','bRefUp','bRefOk'].forEach(id=>$(id).disabled=!online()); $('mOff').style.display=online()?'none':'block';
+  ['mRes','mCup','cPrice','bRefUp'].forEach(id=>$(id).disabled=!online()); $('mOff').style.display=online()?'none':'block';
   lockPf();
   renderDevs(); updateDirty();
 }
@@ -1024,13 +1036,12 @@ function updTeach(){
   $('tiPos').textContent='posição: '+fmtInt(lastSt.pos)+' passos';
   $('tiTot').textContent=fmt(P().ttot)+' s';
   if(!teach){ ['tiSteps','tiRev','tiDeg'].forEach(i=>$(i).textContent='—');
-    $('tiInfo').textContent='Curso ainda não ensinado.'; $('bTiCalc').disabled=true; return; }
+    $('tiInfo').textContent='Curso ainda não ensinado.'; return; }
   const st=teachSteps(), rev=st/spr();
   $('tiSteps').textContent=fmtInt(st); $('tiRev').textContent=fmt(rev); $('tiDeg').textContent=fmtInt(rev*360)+'°';
   const prf=descSteps(P()), diff=(prf-st)/st*100;
   $('tiInfo').innerHTML = Math.abs(diff)<0.5 ? '<span style="color:var(--ok)">✓ A curva percorre exatamente o curso ensinado.</span>'
-    : `A curva percorre <b style="color:var(--tx)">${fmtInt(prf)}</b> passos (<span style="color:var(--warn)">${diff>0?'+':''}${fmt(diff,1)}%</span> do curso). Toque em <b>Recalcular tempo</b>.`;
-  $('bTiCalc').disabled=!online();
+    : `A curva percorre <b style="color:var(--tx)">${fmtInt(prf)}</b> passos (<span style="color:var(--warn)">${diff>0?'+':''}${fmt(diff,1)}%</span> do curso).`;
 }
 $('bTop').onclick=()=>{ if(lastSt.st!==0){ toast('Pare o motor primeiro'); return; } send('ZERO'); toast('TOPO definido (posição = 0)'); };
 $('bBot').onclick=()=>{
@@ -1041,18 +1052,22 @@ $('bBot').onclick=()=>{
 };
 // estica/encolhe a curva INTEIRA no tempo (rampa incluída): velocidades e forma preservadas,
 // o curso percorrido (área) muda na mesma proporção → fecha exatamente no curso ensinado
+// ajusta o tempo total (mantendo a forma) para a curva percorrer exatamente o curso do Teach In
+function fitTeach(p=P()){
+  if(!teach) return false; const S=teachSteps(); if(!(S>0)) return false; let ch=false;
+  for(let it=0;it<4;it++){
+    const k=S/Math.max(1,descSteps(p)); if(!(k>0)) break;
+    const T=clamp(p.ttot*k,0.3,600), kk=T/p.ttot; if(Math.abs(kk-1)<1e-4) break;
+    p.pts.forEach(q=>q.t=+(q.t*kk).toFixed(4)); p.ramp=+(p.ramp*kk).toFixed(4); p.ttot=+T.toFixed(3); ch=true; }
+  return ch;
+}
+function afterCurve(){ const ch=fitTeach(); save(); drawChart(); updSummary(); updTimeLbl(); loadFields(); try{ updMq(); }catch(e){} return ch; }
 function teachTime(fromBot){
   if(!teach){ toast('Ensine o curso primeiro'); return; }
-  const p=P(), S=teachSteps();
-  for(let it=0;it<3;it++){
-    const k=S/Math.max(1,descSteps(p)); if(!(k>0)) return;
-    const T=clamp(p.ttot*k,0.3,600), kk=T/p.ttot;
-    p.pts.forEach(q=>q.t=+(q.t*kk).toFixed(4)); p.ramp=+(p.ramp*kk).toFixed(4); p.ttot=+T.toFixed(3);
-    if(Math.abs(kk-1)<1e-4) break; }
+  const p=P(); fitTeach(p);
   save(); refreshAll();
   toast((fromBot?`Curso ${fmtInt(teach.steps)} passos · `:'')+`tempo total ${fmt(p.ttot)} s`);
 }
-$('bTiCalc').onclick=()=>teachTime(false);
 
 /* gráfico em tempo real ao lado do êmbolo */
 const MC={x0:166,x1:328,y0:32,y1:220};
@@ -1371,14 +1386,7 @@ $('bRefUp').onclick=()=>{
   if(lastSt.st!==0){ toast('Aguarde o motor parar'); return; }
   if(lastSt.pos<=0){ toast('O êmbolo já está no topo'); return; }
   if(isDirty()) sendProfile().then(ok=>{ if(ok) send('UP'); }); else send('UP');
-  toast('Subindo para reabastecer…');
-};
-$('bRefOk').onclick=()=>{
-  if(lastSt.st!==0){ toast('Aguarde o motor parar'); return; }
-  if(lastSt.pos>1){ toast('Suba o êmbolo ao topo primeiro'); return; }
-  if(!confirm('Confirmar: reservatório cheio e êmbolo no topo?')) return;
-  send('REFILL'); store.set('atl_refill',Date.now()); publishSim(); updAvail();
-  toast('Reabastecido ✓ doses liberadas');
+  store.set('atl_refill',Date.now()); publishSim(); toast('Subindo para reabastecer… ao chegar ao topo as doses são liberadas');
 };
 function setMq(k,v,min){ if(isNaN(v)||v<min) { updMq(); return; } mq[k]=+v; if(mq.cup>mq.res) mq.cup=mq.res; store.set('atl_mq',mq); updMq(); publishSim(); updateDirty(); }
 $('mRes').addEventListener('change',()=>setMq('res',parseFloat($('mRes').value),50));
@@ -1386,8 +1394,28 @@ $('mCup').addEventListener('change',()=>setMq('cup',parseFloat($('mCup').value),
 $('cPrice').addEventListener('change',()=>{ const v=parseFloat($('cPrice').value); if(!isNaN(v)&&v>=0){ price=+v.toFixed(2); store.set('atl_price',price); publishSim(); updateDirty(); } updMq(); });
 
 /* ═════════════ NAVEGAÇÃO ═════════════ */
+/* barra de rolagem na lateral direita (rola sem tocar nos botões) */
+(function(){
+  const app=$('app'), m=document.querySelector('main'), rail=$('srail'), th=rail.querySelector('.th'); let drag=null;
+  function upd(){
+    const ch=m.clientHeight, sh=m.scrollHeight, over=sh>ch+4; app.classList.toggle('rail',over); if(!over) return;
+    rail.style.top=m.offsetTop+'px'; rail.style.height=ch+'px';
+    const h=Math.max(44,ch*ch/sh), y=(m.scrollTop/(sh-ch))*(ch-h); th.style.height=h+'px'; th.style.top=y+'px';
+  }
+  function go(clientY){ const r=rail.getBoundingClientRect(), k=r.height/rail.offsetHeight||1, ch=m.clientHeight, sh=m.scrollHeight, h=th.offsetHeight;
+    const y=(clientY-r.top)/k-drag; m.scrollTop=clamp(y/(ch-h),0,1)*(sh-ch); }
+  rail.addEventListener('pointerdown',e=>{ e.preventDefault(); rail.setPointerCapture(e.pointerId); rail.classList.add('on');
+    const r=th.getBoundingClientRect(), k=rail.getBoundingClientRect().height/rail.offsetHeight||1;
+    drag=(e.clientY>=r.top&&e.clientY<=r.bottom)?(e.clientY-r.top)/k:th.offsetHeight/2; go(e.clientY); });
+  rail.addEventListener('pointermove',e=>{ if(drag!==null) go(e.clientY); });
+  const end=()=>{ drag=null; rail.classList.remove('on'); };
+  rail.addEventListener('pointerup',end); rail.addEventListener('pointercancel',end);
+  m.addEventListener('scroll',upd,{passive:true}); addEventListener('resize',upd);
+  new ResizeObserver(upd).observe(m); setInterval(upd,1000); window.updRail=upd; setTimeout(upd,300);
+})();
+
 let curSec='op';
-function nav(s){ curSec=s; document.querySelectorAll('section').forEach(e=>e.classList.toggle('on',e.id==='sec-'+s));
+function nav(s){ curSec=s; setTimeout(()=>{ try{ updRail(); }catch(e){} },50); document.querySelectorAll('section').forEach(e=>e.classList.toggle('on',e.id==='sec-'+s));
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.sec===s));
   if(s==='pf') requestAnimationFrame(()=>{ drawChart(); drawCup(); });
   if(s==='op') refreshMini();
