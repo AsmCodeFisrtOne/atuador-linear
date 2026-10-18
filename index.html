@@ -77,8 +77,13 @@
    Rev.33 – Limites do hardware real (Módulo ESP32-S2 + TB6600HG): micropasso 1, 1/2,
             1/4, 1/8, 1/16 (sem 1/32); velocidade máx. = min(180 RPM, limite do LEDC
             4880 Hz) → 180 RPM em 1/8, 91 RPM em 1/16. Padrões ajustados.
+   Rev.34 – Textos visíveis: o controlador passa a se chamar "Hub" (Procurar Hub, Hubs
+            pareados, Enviar ao Hub). Aba Conexão ganha o cartão "Conexão Wi-Fi do Hub"
+            com botão próprio "Salvar Wi-Fi no Hub" (WIFI,<ssid_b64>,<senha_b64>) e
+            estado do Wi-Fi informado pelo Hub. Senha só na memória (nunca no
+            localStorage); apagada após o envio e ao desconectar.
   ─────────────────────────────────────────────────────────────────────────────
-  PROTOCOLO BLE (para o firmware do Device)
+  PROTOCOLO BLE (para o firmware do Hub)
    Serviço Nordic UART (NUS)  6e400001-b5a3-f393-e0a9-e50e24dcca9e
      RX (app → Device, write)  6e400002-b5a3-f393-e0a9-e50e24dcca9e
      TX (Device → app, notify) 6e400003-b5a3-f393-e0a9-e50e24dcca9e
@@ -134,6 +139,10 @@
      PIN,OK | PIN,ERR
      ACK,CFG | ACK,PRF | ERR,PRF
      VER,<versão do firmware>
+   Wi-Fi do Hub (Rev.34)
+     App → Hub : WIFI,<ssid_b64>,<senha_b64>   (Base64 de UTF-8; SSID vazio = apagar)
+     Hub → App : ACK,WIFI | ERR,WIFI
+                 WIFI,<CONECTADO|CONECTANDO|DESCONECTANDO|DESCONECTADO|ERRO>
 -->
 <html lang="pt-BR">
 <head>
@@ -338,7 +347,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 <!-- ═══════════════ PERFIL ═══════════════ -->
 <section id="sec-pf">
  <div class="col" id="pfL">
-  <div id="pOff" class="warnbox" style="display:none">Conecte ao Device ou ative o <b>Modo demonstração</b> (aba Conexão) para editar.</div>
+  <div id="pOff" class="warnbox" style="display:none">Conecte ao Hub ou ative o <b>Modo demonstração</b> (aba Conexão) para editar.</div>
   <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
     <h2>Perfil de descida</h2>
     <div class="row" style="gap:6px" id="presets"></div>
@@ -380,7 +389,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
   </div>
   <div class="row">
     <button class="btn sec" id="bLinear" style="flex:1;height:50px;font-size:16px">↺ Linear</button>
-    <button class="btn g-green" id="bSend" style="flex:2;height:50px;font-size:16px">⇪ Enviar ao Device</button>
+    <button class="btn g-green" id="bSend" style="flex:2;height:50px;font-size:16px">⇪ Enviar ao Hub</button>
   </div>
 
   <div class="card" id="teachCard" style="display:flex;flex-direction:column;gap:10px;border:1px solid rgba(46,204,113,.35)">
@@ -414,7 +423,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 <!-- ═══════════════ CONEXÃO ═══════════════ -->
 <section id="sec-mq">
   <h2>Máquina</h2>
-  <div id="mOff" class="warnbox" style="display:none">Conecte ao Device ou ative o <b>Modo demonstração</b> (aba Conexão) para editar.</div>
+  <div id="mOff" class="warnbox" style="display:none">Conecte ao Hub ou ative o <b>Modo demonstração</b> (aba Conexão) para editar.</div>
   <div class="card" style="display:flex;flex-direction:column;gap:12px">
     <div class="row">
       <div class="field"><span class="lbl">Volume do reservatório</span><div class="unit"><input class="f" id="mRes" type="number" step="50" min="50" inputmode="decimal" style="font-size:20px"><i>ml</i></div><small>gelato útil, cheio</small></div>
@@ -462,20 +471,37 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
   <div id="noBle2" class="warnbox" style="display:none;position:relative;padding-right:34px"><span id="noBleTxt"></span><button id="noBleX" style="position:absolute;top:4px;right:6px;background:none;border:none;color:inherit;font-size:20px;line-height:1;padding:4px" aria-label="Fechar">×</button></div>
   <div class="card" style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px">
     <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#2fa3ff" stroke-width="1.6"><circle cx="12" cy="12" r="11" stroke="#2e3a47"/><path d="M7 7.5l10 9-5 4.5V3l5 4.5-10 9"/></svg>
-    <div style="font-size:13px;color:var(--mut);text-align:center" id="cxMsg">Toque em procurar e escolha o atuador na lista.</div>
-    <button class="btn g-blue" id="bScan" style="width:100%;height:54px;font-size:18px">🔍 Procurar dispositivo</button>
+    <div style="font-size:13px;color:var(--mut);text-align:center" id="cxMsg">Toque em procurar e escolha o Hub na lista.</div>
+    <button class="btn g-blue" id="bScan" style="width:100%;height:54px;font-size:18px">🔍 Procurar Hub</button>
     <button class="btn sec" id="bDisc" style="width:100%;height:44px;font-size:14px;display:none">Desconectar</button>
   </div>
 
   <div class="card" id="pinCard" style="display:none;flex-direction:column;gap:10px;border:1px solid rgba(47,163,255,.4)">
     <div style="font-weight:600">Pareamento · <span id="pinDev"></span></div>
-    <div style="font-size:12px;color:var(--mut)">Digite o PIN de 6 dígitos do equipamento</div>
+    <div style="font-size:12px;color:var(--mut)">Digite o PIN de 6 dígitos do Hub</div>
     <input class="f" id="pinIn" type="password" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="••••••">
     <label class="sw" style="font-size:12px;color:var(--mut)"><span>Lembrar PIN neste aparelho</span><input type="checkbox" id="pinRem" checked></label>
     <button class="btn g-blue" id="bPin" style="height:48px;font-size:17px">Parear</button>
   </div>
 
-  <div class="lbl" style="margin-top:4px">Dispositivos pareados</div>
+  <div class="card" id="wfCard" style="display:flex;flex-direction:column;gap:8px;padding:16px;border:1px solid rgba(47,163,255,.35)">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+      <div style="font-weight:600;font-size:17px">Conexão Wi-Fi do Hub</div>
+      <div class="lbl" id="wfSt" style="white-space:nowrap">Aguardando Hub</div>
+    </div>
+    <div style="font-size:13px;color:var(--mut)">Informe a rede Wi-Fi que será usada pelo Hub.</div>
+    <div class="lbl" style="margin-top:4px">Nome da rede (SSID)</div>
+    <input class="f" id="wfSsid" maxlength="32" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Digite o nome da rede">
+    <div class="lbl" style="margin-top:4px">Senha do Wi-Fi</div>
+    <div style="position:relative">
+      <input class="f" id="wfPass" type="password" maxlength="63" autocomplete="new-password" autocapitalize="off" spellcheck="false" placeholder="Digite a senha" style="padding-right:48px">
+      <button id="wfEye" type="button" aria-label="Mostrar senha" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--mut);font-size:18px;padding:6px 8px">👁</button>
+    </div>
+    <button class="btn g-blue" id="bWifi" style="height:48px;font-size:16px;margin-top:6px">📶 Salvar Wi-Fi no Hub</button>
+    <div class="hint" id="wfHint" style="border-top:1px solid var(--line);padding-top:10px;font-size:11.5px">Conecte e pareie um Hub por BLE ou ative o Modo demonstração para editar.</div>
+  </div>
+
+  <div class="lbl" style="margin-top:4px">Hubs pareados</div>
   <div id="devList" style="display:flex;flex-direction:column;gap:10px"></div>
 
   <div class="card sw"><div><div style="font-weight:600">Modo demonstração</div><div style="font-size:11px;color:var(--mut)">simula o atuador sem hardware</div></div><button class="tog" id="bDemo"></button></div>
@@ -495,7 +521,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 
 <script>
 'use strict';
-const APP_REV = 'Rev.33';
+const APP_REV = 'Rev.34';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = 20;      // bytes por escrita BLE
@@ -740,8 +766,9 @@ function handleLine(l){
     case 'PIN': if(a[1]==='OK'){ authed=true; onAuthed(); } else { authed=false; toast('PIN incorreto'); showPin(true); forgetPin(); } break;
     case 'ACK': if(ackWait[a[1]]) { ackWait[a[1]](true); delete ackWait[a[1]]; } break;
     case 'ERR': if(a[1]==='BUSY'){ toast('Máquina em uso por outro aparelho'); showBusy('Bluetooth'); setTimeout(()=>{ try{ if(dev&&dev.gatt.connected) dev.gatt.disconnect(); }catch(e){} },100); break; }
-      if(ackWait[a[1]]) { ackWait[a[1]](false); delete ackWait[a[1]]; } toast('Erro do equipamento: '+a.slice(1).join(',')); break;
+      if(ackWait[a[1]]) { ackWait[a[1]](false); delete ackWait[a[1]]; } toast('Erro do Hub: '+a.slice(1).join(',')); break;
     case 'VER': fwVer=a[1]||''; updHeader(); break;
+    case 'WIFI': wfSetState(a[1]||''); break;
   }
 }
 function waitAck(tag,ms=4000){ return new Promise(res=>{ ackWait[tag]=res; setTimeout(()=>{ if(ackWait[tag]){ delete ackWait[tag]; res(null); } },ms); }); }
@@ -762,7 +789,7 @@ async function connectTo(name){
       const filters = name ? [{name}] : [{namePrefix:NAME_PREFIX},{services:[NUS.svc]}];
       d=await navigator.bluetooth.requestDevice({filters, optionalServices:[NUS.svc]});
     }
-    dev=d; $('cxMsg').textContent='Conectando a '+(dev.name||'dispositivo')+'…';
+    dev=d; $('cxMsg').textContent='Conectando a '+(dev.name||'Hub')+'…';
     dev.addEventListener('gattserverdisconnected',onDisconnect);
     const srv=await dev.gatt.connect();
     const s=await srv.getPrimaryService(NUS.svc);
@@ -773,7 +800,7 @@ async function connectTo(name){
     const pin=getPin(dev.name);
     if(pin){ sendPin(pin,false); } else showPin(true);
   }catch(e){
-    if(e && e.name==='NotFoundError'){ $('cxMsg').textContent='Nenhum dispositivo selecionado.'; return; }
+    if(e && e.name==='NotFoundError'){ $('cxMsg').textContent='Nenhum Hub selecionado.'; return; }
     console.warn(e); toast('Falha ao conectar: '+(e.message||e)); $('cxMsg').textContent='Não foi possível conectar.'; cleanupBle();
   }
 }
@@ -786,12 +813,12 @@ function showPin(v){ $('pinCard').style.display=v?'flex':'none'; if(v){ $('pinDe
 $('bPin').onclick=()=>{ const v=$('pinIn').value.replace(/\D/g,''); if(v.length!==6){ toast('O PIN tem 6 dígitos'); return; } sendPin(v,$('pinRem').checked); };
 async function onAuthed(){ const r=await claimLock(); if(!r.ok){ showBusy('outro aparelho'); toast('Máquina em uso por outro aparelho'); try{ dev.gatt.disconnect(); }catch(e){} return; } $('busyBox').style.display='none'; startLockBeat(); sentSig=''; showPin(false); updHeader(); toast('Conectado ✓'); $('cxMsg').textContent='Conectado a '+(dev?dev.name:''); if(!demo) nav('op'); }
 function onDisconnect(){ const was=connected; cleanupBle(); if(was) toast('Conexão perdida — motor parado pelo watchdog'); }
-function cleanupBle(){ if(authed) releaseLock(); connected=false; authed=false; rxC=txC=null; jogStop(); updHeader(); onStatus(0,0,lastSt.pos,0,0); }
+function cleanupBle(){ if(authed) releaseLock(); connected=false; authed=false; rxC=txC=null; jogStop(); wfReset(); updHeader(); onStatus(0,0,lastSt.pos,0,0); }
 $('bScan').onclick=()=>connectTo(null);
 $('bDisc').onclick=()=>{ if(demo){ setDemo(false); return; } try{ send('STOP'); }catch(e){} setTimeout(()=>{ if(dev&&dev.gatt.connected) dev.gatt.disconnect(); },150); };
 function renderDevs(){
   const c=$('devList'); c.innerHTML=''; const l=knownDevs();
-  if(!l.length){ c.innerHTML='<div class="hint" style="text-align:left">Nenhum ainda. Os dispositivos conectados aparecem aqui.</div>'; return; }
+  if(!l.length){ c.innerHTML='<div class="hint" style="text-align:left">Nenhum ainda. Os Hubs conectados aparecem aqui.</div>'; return; }
   l.forEach(d=>{ const el=document.createElement('div'); el.className='card dev';
     const isCur=connected && dev && dev.name===d.name;
     el.innerHTML=`<div><div class="n">${d.name}</div><div class="d">${isCur?'conectado'+(fwVer?' · fw '+fwVer:''):'último uso '+new Date(d.last).toLocaleDateString('pt-BR')}</div></div>`;
@@ -804,9 +831,10 @@ function updHeader(){
   $('hdTxt').textContent = demo?'DEMO · simulação' : connected ? (dev.name+(authed?' · conectado':' · aguardando PIN')) : 'desconectado';
   $('bDisc').style.display=(connected||demo)?'flex':'none';
   $('bScan').style.display=(connected||demo)?'none':'flex';
-  if(!connected&&!demo) $('cxMsg').textContent='Toque em procurar e escolha o atuador na lista.';
+  if(!connected&&!demo) $('cxMsg').textContent='Toque em procurar e escolha o Hub na lista.';
   ['bAuto','bTop','bBot'].forEach(id=>$(id).disabled=!online()); document.querySelectorAll('.jog').forEach(b=>b.disabled=!online()); $('bUpAuto').disabled=!online()||lastSt.st===1||lastSt.st===2;
   $('bSend').disabled=!online();
+  wfLock();
   ['mRes','mCup','cPrice','bRefUp','bRefOk'].forEach(id=>$(id).disabled=!online()); $('mOff').style.display=online()?'none':'block';
   lockPf();
   renderDevs(); updateDirty();
@@ -825,9 +853,9 @@ async function sendProfile(){
     await send(`PRF,${DT_MS},${v.length},${sum},${v.join(',')}`);
     const r2=await prfAck;
     if(r1===false||r2===false){ toast('Equipamento recusou o perfil'); return false; }
-    if(r1===null||r2===null){ toast('Sem confirmação do equipamento'); return false; }
+    if(r1===null||r2===null){ toast('Sem confirmação do Hub'); return false; }
     sentSig=sig(p)+'|'+cur; stroke=physStroke(p); updateDirty(); toast(`Perfil ${cur} enviado ✓ (${v.length} pontos)`); return true;
-  }finally{ $('bSend').disabled=!online(); $('bSend').textContent='⇪ Enviar ao Device'; }
+  }finally{ $('bSend').disabled=!online(); $('bSend').textContent='⇪ Enviar ao Hub'; }
 }
 $('bSend').onclick=sendProfile;
 function isDirty(){ return sentSig!==sig()+'|'+cur; }
@@ -992,6 +1020,48 @@ document.querySelectorAll('.jog').forEach(b=>{
 document.addEventListener('visibilitychange',()=>{ if(document.hidden) jogStop(); });
 window.addEventListener('blur',jogStop);
 
+/* ═════════════ WI-FI DO HUB (Rev.34) ═════════════
+   SSID e senha ficam só na memória desta página: nada vai para o localStorage.
+   A senha é apagada do campo depois do envio confirmado e ao desconectar. */
+const b64enc=s=>{ const u=new TextEncoder().encode(s); let b=''; u.forEach(x=>b+=String.fromCharCode(x)); return btoa(b); };
+const b64dec=s=>{ try{ const b=atob(s); return new TextDecoder().decode(Uint8Array.from(b,c=>c.charCodeAt(0))); }catch(e){ return ''; } };
+const WF_TXT={CONECTADO:['Conectado','var(--ok)'],CONECTANDO:['Conectando…','var(--warn)'],DESCONECTANDO:['Desconectando…','var(--warn)'],DESCONECTADO:['Desconectado','var(--mut)'],ERRO:['Erro ao conectar','var(--red)']};
+let wfState='', wfBusy=false;
+function wfSetState(st){ wfState=st; wfLock(); }
+function wfReset(){ wfState=''; $('wfPass').value=''; $('wfPass').type='password'; }
+function wfLock(){
+  const on=online();
+  ['wfSsid','wfPass','wfEye'].forEach(id=>$(id).disabled=!on);
+  $('bWifi').disabled=!on||wfBusy;
+  const el=$('wfSt');
+  if(!on){ el.textContent='Aguardando Hub'; el.style.color='var(--mut)'; }
+  else if(WF_TXT[wfState]){ el.textContent=WF_TXT[wfState][0]; el.style.color=WF_TXT[wfState][1]; }
+  else { el.textContent='Wi-Fi: sem informação'; el.style.color='var(--mut)'; }
+  $('wfHint').textContent = !on ? 'Conecte e pareie um Hub por BLE ou ative o Modo demonstração para editar.'
+    : wfState==='CONECTADO' ? 'O Hub está conectado à internet.'
+    : wfState==='ERRO' ? 'O Hub não conseguiu entrar na rede. Confira o nome e a senha.'
+    : 'A senha não fica salva neste aparelho. O Hub guarda a rede e reconecta sozinho ao ligar.';
+}
+$('wfEye').onclick=()=>{ const p=$('wfPass'); p.type=p.type==='password'?'text':'password'; };
+$('bWifi').onclick=async()=>{
+  if(!online()) return;
+  const ssid=$('wfSsid').value.trim(), pass=$('wfPass').value;
+  if(!ssid){ if(!confirm('Nome da rede vazio. Apagar o Wi-Fi gravado no Hub?')) return; }
+  else if(new TextEncoder().encode(ssid).length>32){ toast('Nome da rede muito longo (máx. 32 bytes)'); return; }
+  if(pass.length>0 && pass.length<8){ toast('Senha Wi-Fi precisa ter 8 a 63 caracteres (ou vazia para rede aberta)'); return; }
+  if(/[\u0000-\u001f]/.test(ssid+pass)){ toast('Caracteres inválidos no nome ou na senha'); return; }
+  wfBusy=true; wfLock(); $('bWifi').textContent='Enviando…';
+  try{
+    const w=waitAck('WIFI',5000);
+    await send(`WIFI,${b64enc(ssid)},${b64enc(ssid?pass:'')}`);
+    const r=await w;
+    if(r===true){ toast(ssid?'Wi-Fi salvo no Hub ✓':'Wi-Fi apagado do Hub'); $('wfPass').value=''; $('wfPass').type='password'; }
+    else if(r===false) toast('O Hub recusou os dados do Wi-Fi');
+    else toast('O Hub não respondeu (firmware sem suporte a Wi-Fi?)');
+  }catch(e){ toast('Falha ao enviar: '+(e.message||e)); }
+  finally{ wfBusy=false; $('bWifi').textContent='📶 Salvar Wi-Fi no Hub'; wfLock(); }
+};
+
 /* ═════════════ MODO DEMO (simulação) ═════════════ */
 const sim={st:0,pos:0,rpm:0,t:0,tab:null,cum:null,dt:DT_MS,upTarget:0,dir:1,jog:{dir:0,rpm:0,last:0},cfg:null,iv:null};
 /* ═════════════ ACESSO EXCLUSIVO (1 aparelho por vez) ═════════════
@@ -1050,7 +1120,7 @@ function _setDemo(on){
   if(on && connected){ $('bDisc').click(); }
   demo=on; $('bDemo').classList.toggle('on',on);
   if(on){ sentSig=''; authed=true; sim.st=0; sim.rpm=0; sim.iv=setInterval(simTick,DT_MS); toast('Modo demonstração ativo'); }
-  else { authed=false; clearInterval(sim.iv); sim.iv=null; onStatus(0,0,0,0,0); }
+  else { authed=false; clearInterval(sim.iv); sim.iv=null; wfReset(); onStatus(0,0,0,0,0); }
   updHeader();
 }
 $('bDemo').onclick=()=>setDemo(!demo);
@@ -1074,6 +1144,11 @@ function simCmd(line){
     case 'RESET': if(sim.st===5) sim.st=0; break;
     case 'ZERO': if(sim.st===0){ sim.pos=0; sim.rpm=0; } break;
     case 'REFILL': if(sim.st===0 && sim.pos<=1){ sim.pos=0; sim.rpm=0; } else setTimeout(()=>handleLine('ERR,REFILL,NAO_TOPO'),40); break;
+    case 'WIFI': { const ss=b64dec(a[1]||''), pw=b64dec(a[2]||'');
+      setTimeout(()=>handleLine('ACK,WIFI'),80);
+      if(!ss){ setTimeout(()=>handleLine('WIFI,DESCONECTADO'),200); break; }
+      setTimeout(()=>handleLine('WIFI,CONECTANDO'),200);
+      setTimeout(()=>{ if(demo) handleLine('WIFI,'+(pw.length===0||pw.length>=8?'CONECTADO':'ERRO')); },2200); break; }
     case 'JOG': { const d=+a[1]; if(sim.st===5) break; sim.jog={dir:d,rpm:+a[2]/10,last:performance.now()}; if(d) sim.st=d>0?3:4; break; }
   }
 }
