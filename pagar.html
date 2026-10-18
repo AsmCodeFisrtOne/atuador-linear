@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  pagar.html · Pagamento SIMULADO · Rev.06 (fecha 4 s após aprovar) · Rev.05 (ajusta o tamanho mesmo em "Site para computador") · Rev.04 (sem menu de toque longo) (fecha/encerra 3 s após aprovar) (tela de aprovação = Tela 3 do display) · 2026-10-16
+  pagar.html · Pagamento SIMULADO · Rev.07 (espera o pedido chegar ao Firebase) · Rev.06 (fecha 4 s após aprovar) · Rev.05 (ajusta o tamanho mesmo em "Site para computador") · Rev.04 (sem menu de toque longo) (fecha/encerra 3 s após aprovar) (tela de aprovação = Tela 3 do display) · 2026-10-16
   Aberto pelo QR Code da máquina: pagar.html?id=<código da venda>&v=<valor>
   Lê/grava vendas/<id> no Firebase Realtime Database (REST, sem SDK).
   Nenhum valor é cobrado — apenas simula a confirmação do Pix.
@@ -105,7 +105,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
   <!-- erro / já usado / expirado -->
   <div class="card err hide" id="vErr"><div class="msg" id="eMsg">Ops!</div><div class="sub" id="eSub"></div></div>
 
-  <div class="foot">Página de demonstração · Rev.06</div>
+  <div class="foot">Página de demonstração · Rev.07</div>
 </div>
 <script>
 'use strict';
@@ -127,8 +127,13 @@ function err(m,s){ $('eMsg').textContent=m; $('eSub').innerHTML=s; show('vErr');
 async function load(){
   if(!id){ err('Pedido inválido','Leia o QR Code exibido na máquina.'); return; }
   try{
-    const r=await fetch(`${DB}/vendas/${id}.json`); if(!r.ok) throw new Error('HTTP '+r.status);
-    const d=await r.json();
+    // Rev.07: a máquina mostra o QR antes de o pedido chegar ao Firebase → espera até ~15 s
+    let d=null;
+    for(let i=0;i<10;i++){
+      const r=await fetch(`${DB}/vendas/${id}.json`,{cache:'no-store'}); if(!r.ok) throw new Error('HTTP '+r.status);
+      d=await r.json(); if(d) break;
+      await new Promise(ok=>setTimeout(ok,1500));
+    }
     if(!d){ err('Pedido não encontrado','Este QR Code não é válido.<br>Toque em <b>Quero!</b> na máquina para gerar outro.'); return; }
     if(d.status==='pago'||d.status==='servido'){ err('Já pago ✓','Este pedido já foi pago.<br>Cada QR Code vale para um copo.'); return; }
     if(d.status==='expirado'||d.status==='cancelado'||(d.expira && Date.now()>d.expira)){ err('QR Code expirado','Toque em <b>Quero!</b> na máquina para gerar um novo.'); return; }
