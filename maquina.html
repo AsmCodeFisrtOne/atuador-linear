@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.16 · 2026-10-18
+  maquina.html · SIMULADOR DO DISPLAY DA MÁQUINA DE GELATO · Rev.17 · 2026-10-18
   Faz o papel do display TFT (480×320) até o firmware do Device ficar pronto:
    1 Boas-vindas → 2 Pix (QR real, pedido no Firebase) → 3 Aprovado → 4 Servindo
    → 5 Bom apetite → (6 Reabastecer quando acabam as porções)
@@ -26,6 +26,7 @@
   Rev.12 – Cabeçalho: bateria removida; GPS (ícone de satélite verde/vermelho, nº de
            satélites, barras de sinal e coordenadas) — valores simulados.
   Rev.16 – Retire o copo: 5 s para voltar ao início (era 12 s).
+  Rev.17 – QR do Pix sem o selo "pix" no centro.
   Rev.15 – Display ocupa a tela toda do celular; em pé, gira 90° sozinho para usar a altura.
   Rev.14 – Arte nova (igual ao Hub v0.5): tema escuro de alto contraste; cabeçalho com
            status agrupado [Wi-Fi BT | GPS e coordenadas | satélites e barras]; bico mais
@@ -57,7 +58,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 </style></head><body>
 <div id="disp"><div id="scr"></div></div>
 <button id="fs">⛶ tela cheia</button>
-<div id="tag">SIMULADOR DO DISPLAY · Rev.16</div>
+<div id="tag">SIMULADOR DO DISPLAY · Rev.17</div>
 <script>
 'use strict';
 // Copyright (c) 2009 Kazuhiko Arase
@@ -199,7 +200,6 @@ const T={
    <g transform="translate(22 52)">
      <rect width="196" height="236" rx="16" fill="#fff" filter="url(#sh)"/>
      <g transform="translate(26 20) scale(${144/q.n})" shape-rendering="crispEdges"><path d="${q.d}" fill="#1A0E08"/></g>
-     <rect x="74" y="72" width="48" height="22" rx="6" fill="#fff"/><text x="98" y="89" font-size="16" fill="${C.green2}" text-anchor="middle" font-weight="700">pix</text>
      <text x="98" y="196" font-size="13.5" fill="#3A2318" text-anchor="middle">Aponte a câmera</text>
      <text x="98" y="214" font-size="13.5" fill="#3A2318" text-anchor="middle">do seu celular</text></g>
    <text x="240" y="80" font-size="29" fill="${C.tx}">Pague com Pix</text>
