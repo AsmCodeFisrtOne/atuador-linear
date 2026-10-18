@@ -82,6 +82,9 @@
             com botão próprio "Salvar Wi-Fi no Hub" (WIFI,<ssid_b64>,<senha_b64>) e
             estado do Wi-Fi informado pelo Hub. Senha só na memória (nunca no
             localStorage); apagada após o envio e ao desconectar.
+   Rev.36 – Curvas longas: a tabela enviada ao Hub tem no máximo 512 pontos (passo
+            dt = máx(20 ms, T/511)); escrita BLE em blocos de 180 bytes (20 no iPhone)
+            e tempo de confirmação proporcional ao tamanho → perfis de 14 s ou mais.
    Rev.35 – Wi-Fi: o Hub informa o motivo do erro (WIFI,ERRO,SENHA|REDE|TEMPO) e o app
             mostra a causa (senha incorreta, rede não encontrada/5 GHz, tempo esgotado).
   ─────────────────────────────────────────────────────────────────────────────
@@ -524,10 +527,10 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 
 <script>
 'use strict';
-const APP_REV = 'Rev.35';
+const APP_REV = 'Rev.36';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
-const CHUNK = 20;      // bytes por escrita BLE
+const CHUNK = /iPhone|iPad|iPod/.test(navigator.userAgent) ? 20 : 180;  // bytes por escrita BLE (iPhone/Bluefy: 20)
 const DT_MS = 20;      // passo da tabela enviada (ms)
 const JOG_MS = 100;    // heartbeat do jog
 const BASE_STEPS = 200;// NEMA 1,8°
@@ -584,6 +587,9 @@ function pchip(pts){
     const t=(x-xs[i])/h[i], t2=t*t, t3=t2*t;
     return (2*t3-3*t2+1)*ys[i]+(t3-2*t2+t)*h[i]*m[i]+(-2*t3+3*t2)*ys[i+1]+(t3-t2)*h[i]*m[i+1]; };
 }
+function tableSend(p=P(), maxN=512){ // tabela enviada ao Hub: no máximo 512 pontos (o Módulo usa ≤ 512)
+  const f=pchip(p.pts), T=p.ttot*1000, dt=Math.max(DT_MS, Math.ceil(T/(maxN-1))), n=Math.floor(T/dt+1e-9)+1, v=[];
+  for(let i=0;i<n;i++) v.push(Math.max(0,f(i*dt/1000))); return {dt,v}; }
 function table(p=P()){ const f=pchip(p.pts), n=Math.round(p.ttot*1000/DT_MS)+1, v=[]; for(let i=0;i<n;i++) v.push(Math.max(0,f(i*DT_MS/1000))); return v; }
 function spr(p=P()){ return BASE_STEPS*p.micro; }
 function descSteps(p=P()){ const v=table(p), dt=DT_MS/1000; let s=0; for(let i=0;i<v.length-1;i++) s+=(v[i]+v[i+1])/2/60*dt; return s*spr(p); }
@@ -846,14 +852,15 @@ function updHeader(){
 /* ═════════════ ENVIO DO PERFIL ═════════════ */
 async function sendProfile(){
   if(!online()){ toast('Conecte primeiro'); return false; }
-  const p=P(), v=table(p).map(x=>Math.round(x*10)); const sum=v.reduce((a,b)=>a+b,0)%65536;
+  const p=P(), ts=tableSend(p), v=ts.v.map(x=>Math.round(x*10)); const sum=v.reduce((a,b)=>a+b,0)%65536;
   $('bSend').disabled=true; $('bSend').textContent='Enviando…';
   try{
     const cfgAck=waitAck('CFG');
     await send(`CFG,${p.micro},${Math.round(p.vsub*10)},${p.comp},${Math.round(p.vman*10)},${Math.round(p.ramp*1000)},${Math.round(p.amax)},${Math.round(p.ttot*1000)},${Math.round(mq.res)},${Math.round(mq.cup)},${Math.round(price*100)},${Math.round(teachSteps())}`);
     const r1=await cfgAck;
-    const prfAck=waitAck('PRF',8000);
-    await send(`PRF,${DT_MS},${v.length},${sum},${v.join(',')}`);
+    const line=`PRF,${ts.dt},${v.length},${sum},${v.join(',')}`;
+    const prfAck=waitAck('PRF',10000+Math.ceil(line.length/CHUNK)*120);  // tempo cresce com o tamanho da curva
+    await send(line);
     const r2=await prfAck;
     if(r1===false||r2===false){ toast('Equipamento recusou o perfil'); return false; }
     if(r1===null||r2===null){ toast('Sem confirmação do Hub'); return false; }
