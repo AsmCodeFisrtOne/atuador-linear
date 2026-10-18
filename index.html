@@ -82,6 +82,12 @@
             com botão próprio "Salvar Wi-Fi no Hub" (WIFI,<ssid_b64>,<senha_b64>) e
             estado do Wi-Fi informado pelo Hub. Senha só na memória (nunca no
             localStorage); apagada após o envio e ao desconectar.
+   Rev.40 – Curva do copo no topo da aba Perfil (acima do perfil de descida).
+   Rev.39 – Curva do copo arrastável: bolinhas no fim da aceleração, no início da desaceleração
+            e no fim do copo (como no gráfico do perfil de descida).
+   Rev.38 – Curva do copo: o TEMPO DO COPO é definido no gráfico (rampa acel. · tempo total ·
+            rampa desacel.); a velocidade constante é consequência (volume de 1 copo nesse
+            tempo). O protocolo não muda: CUP continua levando ta, v (calculada) e td.
    Rev.37 – CURVA DO COPO (venda): rampa de aceleração · velocidade constante · rampa de
             desaceleração, igual para todos os copos. O app calcula o tempo constante para
             entregar exatamente os passos de 1 copo (Teach In × copo ÷ reservatório).
@@ -364,9 +370,25 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
  <div class="col" id="pfL">
   <div id="pOff" class="warnbox" style="display:none">Conecte ao Hub ou ative o <b>Modo demonstração</b> (aba Conexão) para editar.</div>
   <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-    <h2>Perfil de descida</h2>
+    <h2>Perfil</h2>
     <div class="row" style="gap:6px" id="presets"></div>
   </div>
+  <div class="card" id="cupCard" style="display:flex;flex-direction:column;gap:10px;border:1px solid rgba(255,111,145,.4)">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+      <span style="font-size:18px;font-weight:700">Curva do copo <span style="font-weight:400;font-size:13px;color:var(--mut)">(venda)</span></span>
+      <span class="lbl" id="cupPpc">—</span>
+    </div>
+    <div style="font-size:12px;color:var(--mut);line-height:1.4">Usada em <b style="color:var(--tx)">Servir 1 copo</b> e nas vendas, igual para todos os copos. Você define as rampas e o <b style="color:var(--tx)">tempo do copo</b>; a <b style="color:var(--tx)">velocidade constante</b> é calculada para entregar exatamente 1 copo nesse tempo.</div>
+    <svg id="cupChart" style="width:100%;height:160px;display:block"></svg>
+    <div class="row">
+      <div class="field"><span class="lbl">Rampa acel.</span><div class="unit"><input class="f" id="cupTa" type="number" step="0.05" min="0.05" inputmode="decimal"><i>s</i></div></div>
+      <div class="field"><span class="lbl">Tempo do copo</span><div class="unit"><input class="f" id="cupT" type="number" step="0.1" min="0.2" inputmode="decimal"><i>s</i></div></div>
+      <div class="field"><span class="lbl">Rampa desacel.</span><div class="unit"><input class="f" id="cupTd" type="number" step="0.05" min="0.05" inputmode="decimal"><i>s</i></div></div>
+    </div>
+    <div style="font-size:12px;color:var(--mut)" id="cupSum"></div>
+    <div class="hint">arraste as bolinhas: fim da aceleração · início da desaceleração · fim do copo</div>
+  </div>
+  <h2 style="margin-top:6px">Perfil de descida <span style="font-weight:400;font-size:13px;color:var(--mut)">(ciclo automático · Teach In)</span></h2>
   <div class="card" style="padding:8px 6px 8px">
     <div id="chartWrap"><svg id="chart"></svg></div>
     <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 6px 0;font-size:11px;gap:6px;flex-wrap:wrap">
@@ -433,20 +455,6 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
     <div id="tiInfo" style="font-size:12px;color:var(--mut)">Curso ainda não ensinado.</div>
   </div>
 
-  <div class="card" id="cupCard" style="display:flex;flex-direction:column;gap:10px;border:1px solid rgba(255,111,145,.4)">
-    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
-      <span style="font-size:18px;font-weight:700">Curva do copo <span style="font-weight:400;font-size:13px;color:var(--mut)">(venda)</span></span>
-      <span class="lbl" id="cupPpc">—</span>
-    </div>
-    <div style="font-size:12px;color:var(--mut);line-height:1.4">Usada em <b style="color:var(--tx)">Servir 1 copo</b> e nas vendas, igual para todos os copos. O <b style="color:var(--tx)">tempo em velocidade constante</b> é calculado para entregar exatamente 1 copo.</div>
-    <svg id="cupChart" style="width:100%;height:160px;display:block"></svg>
-    <div class="row">
-      <div class="field"><span class="lbl">Rampa acel.</span><div class="unit"><input class="f" id="cupTa" type="number" step="0.05" min="0.05" inputmode="decimal"><i>s</i></div></div>
-      <div class="field"><span class="lbl">Velocidade</span><div class="unit"><input class="f" id="cupV" type="number" step="5" min="5" inputmode="decimal"><i>RPM</i></div></div>
-      <div class="field"><span class="lbl">Rampa desacel.</span><div class="unit"><input class="f" id="cupTd" type="number" step="0.05" min="0.05" inputmode="decimal"><i>s</i></div></div>
-    </div>
-    <div style="font-size:12px;color:var(--mut)" id="cupSum"></div>
-  </div>
  </div>
 </section>
 
@@ -551,7 +559,7 @@ input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-ca
 
 <script>
 'use strict';
-const APP_REV = 'Rev.37';
+const APP_REV = 'Rev.40';
 const NUS = { svc:'6e400001-b5a3-f393-e0a9-e50e24dcca9e', rx:'6e400002-b5a3-f393-e0a9-e50e24dcca9e', tx:'6e400003-b5a3-f393-e0a9-e50e24dcca9e' };
 const NAME_PREFIX = 'ATUADOR';
 const CHUNK = /iPhone|iPad|iPod/.test(navigator.userAgent) ? 20 : 180;  // bytes por escrita BLE (iPhone/Bluefy: 20)
@@ -572,16 +580,16 @@ function toast(m){ const t=$('toast'); t.textContent=m; t.classList.add('show');
 
 /* ═════════════ PERFIS ═════════════ */
 function linearPts(T,r,v){ const p=[{t:0,v:0},{t:r,v}]; const n=4; for(let i=1;i<=n;i++) p.push({t:+(r+(T-r)*i/n).toFixed(3),v}); return p; }
-function defCup(){ return { ta:0.3, v:120, td:0.3 }; }
+function defCup(){ return { ta:0.3, T:1.0, td:0.3 }; }
 function defProfile(){ return { ttot:3, ramp:0.4, vsub:150, comp:40, vman:150, micro:8, amax:1500, vscale:200, pts:linearPts(3,0.4,150), cup:defCup() }; }
 /* limite do hardware: LEDC 12 bits do Módulo (ESP32-S2) gera até ~4880 Hz de STEP; teto operacional 180 RPM */
 const VMAX_ABS=180, STEP_HZ_MAX=4880;
 function vmax(p=P()){ return Math.min(VMAX_ABS, Math.floor(STEP_HZ_MAX*60/(200*p.micro))); }
 function enforceLimits(p){ if(![1,2,4,8,16].includes(+p.micro)) p.micro=8; const m=vmax(p);
-  p.vsub=Math.min(p.vsub,m); p.vman=Math.min(p.vman,m); p.pts.forEach(q=>q.v=Math.min(q.v,m)); if(p.vscale<50) p.vscale=50; if(p.cup) p.cup.v=Math.min(p.cup.v,m); }
+  p.vsub=Math.min(p.vsub,m); p.vman=Math.min(p.vman,m); p.pts.forEach(q=>q.v=Math.min(q.v,m)); if(p.vscale<50) p.vscale=50; }
 let profiles = store.get('atl_profiles', null) || { A:defProfile(), B:defProfile(), C:defProfile() };
 Object.values(profiles).forEach(enforceLimits);
-Object.values(profiles).forEach(p=>{ if(!p.cup) p.cup=defCup(); });
+Object.values(profiles).forEach(p=>{ if(!p.cup||!(p.cup.T>0)) p.cup=defCup(); });
 let cur = store.get('atl_cur','A'); if(!profiles[cur]) cur=Object.keys(profiles)[0];
 let sentSig = ''; // não persiste: o Device pode ter reiniciado → reenvia sempre ao abrir/conectar
 const P = () => profiles[cur];
@@ -624,7 +632,7 @@ function upTime(p=P()){
   const dAcc=v*v/a; // aceleração + desaceleração
   return rev>=dAcc ? 2*v/a+(rev-dAcc)/v : 2*Math.sqrt(rev/a);
 }
-function sig(p=P()){ return JSON.stringify([p.ttot,p.ramp,p.vsub,p.comp,p.vman,p.micro,p.amax,p.pts,p.cup,store.get('atl_price',12),store.get('atl_mq',null)]); }
+function sig(p=P()){ return JSON.stringify([p.ttot,p.ramp,p.vsub,p.comp,p.vman,p.micro,p.amax,p.pts,p.cup,(typeof teach!=='undefined'&&teach)?teach.steps:0,store.get('atl_price',12),store.get('atl_mq',null)]); }
 
 /* ═════════════ GRÁFICO ═════════════ */
 const svg=$('chart'); let sel=3, CH={W:340,H:240,L:40,R:12,T:12,B:30};
@@ -888,8 +896,8 @@ async function sendProfile(){
     const prfAck=waitAck('PRF',10000+Math.ceil(line.length/CHUNK)*120);  // tempo cresce com o tamanho da curva
     await send(line);
     const r2=await prfAck;
-    const c=cupOf(p), cupAck=waitAck('CUP');
-    await send(`CUP,${Math.round(c.ta*1000)},${Math.round(c.v*10)},${Math.round(c.td*1000)}`);
+    const c=cupOf(p), pl=cupPlan(p), vC=pl?Math.min(pl.vpk,vmax(p)):100, cupAck=waitAck('CUP');
+    await send(`CUP,${Math.round(c.ta*1000)},${Math.round(vC*10)},${Math.round(c.td*1000)}`);
     const r3=await cupAck;
     if(r3===null && r1!==null && r2!==null) toast('O Hub não confirmou a curva do copo (firmware antigo?)');
     if(r1===false||r2===false){ toast('Equipamento recusou o perfil'); return false; }
@@ -939,44 +947,70 @@ function onStatus(st,rpm,pos,tms,fc,mode=0){
    O tempo constante sai do volume: passos/copo = Teach In × copo ÷ reservatório.
    Se as rampas sozinhas já passam do copo, vira triângulo (pico menor, mesmas acelerações) —
    exatamente o que o Módulo faz. */
-function cupOf(p=P()){ if(!p.cup) p.cup=defCup(); return p.cup; }
+function cupOf(p=P()){ if(!p.cup||!(p.cup.T>0)) p.cup=defCup(); return p.cup; }
+// tempo é entrada: V = voltas do copo ÷ (T − (ta+td)/2)   (área do trapézio = volume de 1 copo)
 function cupPlan(p=P()){
   const c=cupOf(p), sp=spr(p), ppc=doseSteps(); if(!ppc) return null;
-  const rev=ppc/sp, vps=c.v/60, a1=vps/c.ta, a2=vps/c.td;
-  let tc=rev/vps-(c.ta+c.td)/2, vpk=c.v, ta=c.ta, td=c.td, tri=false;
-  if(tc<0){ tri=true; tc=0; const vp=Math.sqrt(2*rev/(1/a1+1/a2)); vpk=vp*60; ta=vp/a1; td=vp/a2; }
-  return {ppc, rev, tc, vpk, ta, td, T:ta+tc+td, tri, accOk: c.v/c.ta<=p.amax && c.v/c.td<=p.amax};
+  const rev=ppc/sp, ta=c.ta, td=c.td, T=Math.max(c.T, ta+td), tc=T-ta-td;
+  const vpk=rev*60/(T-(ta+td)/2), vm=vmax(p);
+  return {ppc, rev, tc, vpk, ta, td, T, tri:false, vOk: vpk<=vm, vm, accOk: vpk/ta<=p.amax && vpk/td<=p.amax};
 }
-let cupNow=-1;
+let cupNow=-1, cupDrag=-1, cupTview=0; const CUPG={};
 function drawCup(){
   const el=$('cupChart'); if(!el) return; const p=P(), c=cupOf(p), pl=cupPlan(p);
   const W=el.clientWidth||340, H=el.clientHeight||160, L=36, Rr=10, Tp=10, B=26; el.setAttribute('viewBox',`0 0 ${W} ${H}`);
-  ['cupTa','cupV','cupTd'].forEach((id,i)=>{ if(document.activeElement!==$(id)) $(id).value=[c.ta,c.v,c.td][i]; });
+  ['cupTa','cupT','cupTd'].forEach((id,i)=>{ if(document.activeElement!==$(id)) $(id).value=[c.ta,c.T,c.td][i]; });
   if(!pl){ el.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#8b98a5" font-size="12" text-anchor="middle">Faça o Teach In para calcular o copo</text>`; $('cupPpc').textContent='—'; $('cupSum').textContent=''; return; }
-  const T=pl.T, vs=Math.max(40,Math.ceil(Math.max(c.v,pl.vpk)*1.25/40)*40);
-  const X=t=>L+t/T*(W-L-Rr), Y=v=>H-B-v/vs*(H-Tp-B);
+  const T=pl.T, vs=Math.max(40,Math.ceil(pl.vpk*1.25/40)*40);
+  if(cupDrag<0 || !cupTview) cupTview=T*1.15;            // folga à direita para esticar o copo
+  if(T>cupTview) cupTview=T*1.15;
+  const TV=cupTview, X=t=>L+t/TV*(W-L-Rr), Y=v=>H-B-v/vs*(H-Tp-B);
+  Object.assign(CUPG,{L,Rr,W,H,TV,X,tOf:x=>(x-L)/(W-L-Rr)*TV});
   let g='';
   g+=`<rect x="${X(0)}" y="${Tp}" width="${X(pl.ta)-X(0)}" height="${H-Tp-B}" fill="rgba(245,166,35,.13)"/>`;
   g+=`<rect x="${X(pl.ta+pl.tc)}" y="${Tp}" width="${X(T)-X(pl.ta+pl.tc)}" height="${H-Tp-B}" fill="rgba(255,111,145,.13)"/>`;
   for(let k=0;k<=4;k++){ const v=vs*k/4; g+=`<line x1="${L}" x2="${W-Rr}" y1="${Y(v)}" y2="${Y(v)}" stroke="#2e3a47" stroke-width="${k?0.6:1}"/><text x="${L-5}" y="${Y(v)+3}" fill="#8b98a5" font-size="9" text-anchor="end">${Math.round(v)}</text>`; }
-  for(let k=0;k<=4;k++){ const t=T*k/4; g+=`<text x="${X(t)}" y="${H-B+13}" fill="#8b98a5" font-size="9" text-anchor="middle">${fmt(t,2)}</text>`; }
+  for(let k=0;k<=4;k++){ const t=TV*k/4; g+=`<text x="${X(t)}" y="${H-B+13}" fill="#8b98a5" font-size="9" text-anchor="middle">${fmt(t,2)}</text>`; }
   g+=`<text x="${(L+W-Rr)/2}" y="${H-2}" fill="#8b98a5" font-size="9" text-anchor="middle">tempo do copo (s)</text>`;
   const pts=[[0,0],[pl.ta,pl.vpk],[pl.ta+pl.tc,pl.vpk],[T,0]].map(([t,v])=>`${X(t).toFixed(1)} ${Y(v).toFixed(1)}`);
   g+=`<path d="M${pts.join('L')}Z" fill="rgba(255,111,145,.14)"/><path d="M${pts.join('L')}" fill="none" stroke="#FF6F91" stroke-width="2.5" stroke-linejoin="round"/>`;
   g+=`<text x="${(X(0)+X(pl.ta))/2}" y="${Tp+11}" fill="#f5a623" font-size="8.5" text-anchor="middle" font-weight="700">ACEL.</text>`;
-  if(pl.tc>0) g+=`<text x="${(X(pl.ta)+X(pl.ta+pl.tc))/2}" y="${Y(pl.vpk)-5}" fill="#FF6F91" font-size="8.5" text-anchor="middle" font-weight="700">${Math.round(pl.vpk)} RPM · ${fmt(pl.tc,2)} s</text>`;
+  g+=`<text x="${(X(pl.ta)+X(pl.ta+pl.tc))/2}" y="${Y(pl.vpk)-5}" fill="${pl.vOk?'#FF6F91':'#e5484d'}" font-size="8.5" text-anchor="middle" font-weight="700">${Math.round(pl.vpk)} RPM${pl.tc>0?' · '+fmt(pl.tc,2)+' s':''}</text>`;
+  if(!pl.vOk && pl.vm<vs) g+=`<line x1="${L}" x2="${W-Rr}" y1="${Y(pl.vm)}" y2="${Y(pl.vm)}" stroke="#e5484d" stroke-dasharray="5 4" opacity=".8"/>`;
   g+=`<text x="${(X(pl.ta+pl.tc)+X(T))/2}" y="${Tp+11}" fill="#FF6F91" font-size="8.5" text-anchor="middle" font-weight="700">DESACEL.</text>`;
+  // bolinhas arrastáveis: 0 fim da aceleração · 1 início da desaceleração · 2 fim do copo
+  const hs=[[pl.ta,pl.vpk],[pl.ta+pl.tc,pl.vpk],[T,0]]; CUPG.h=hs.map(([t,v])=>[X(t),Y(v)]);
+  hs.forEach(([t,v],i)=>{ const on=i===cupDrag; if(on) g+=`<circle cx="${X(t)}" cy="${Y(v)}" r="15" fill="rgba(255,111,145,.25)"/>`;
+    g+=`<circle cx="${X(t)}" cy="${Y(v)}" r="${on?7.5:6}" fill="${i===2?'#FF6F91':'#0f1419'}" stroke="#FF6F91" stroke-width="2.5"/>`; });
+  if(cupDrag>=0) g+=`<text x="${W-Rr}" y="${Tp+24}" fill="#FF6F91" font-size="10" text-anchor="end" font-weight="700">${['acel. '+fmt(pl.ta,2)+' s','desacel. '+fmt(pl.td,2)+' s','copo '+fmt(pl.T,2)+' s'][cupDrag]}</text>`;
   if(cupNow>=0){ const t=clamp(cupNow,0,T), x=X(t), vP=t<pl.ta?pl.vpk*t/pl.ta:t<pl.ta+pl.tc?pl.vpk:Math.max(0,pl.vpk*(T-t)/pl.td);
     g+=`<line x1="${x}" x2="${x}" y1="${Tp}" y2="${H-B}" stroke="#2ecc71" stroke-width="1.4"/><circle cx="${x}" cy="${Y(vP)}" r="4.5" fill="#2ecc71" stroke="#0f1419" stroke-width="1.5"/><circle cx="${x}" cy="${Y(lastSt.rpm)}" r="3" fill="#fff"/>`; }
   el.innerHTML=g;
   $('cupPpc').textContent=`${fmtInt(pl.ppc)} passos/copo`;
-  $('cupSum').innerHTML = `Copo: <b style="color:var(--tx)">${fmt(pl.T,2)} s</b> · ${fmt(pl.rev,2)} voltas`
-    + (pl.tri ? ` · <span style="color:var(--warn)">rampas longas para este volume: pico de ${Math.round(pl.vpk)} RPM, sem trecho constante</span>` : ` · constante ${fmt(pl.tc,2)} s`)
-    + (pl.accOk ? '' : ` · <span style="color:var(--red)">rampa acima da aceleração máx. (${fmtInt(p.amax)} RPM/s)</span>`);
+  $('cupSum').innerHTML = `Velocidade: <b style="color:${pl.vOk?'var(--tx)':'var(--red)'}">${fmt(pl.vpk,1)} RPM</b> · ${fmt(pl.rev,2)} voltas · constante ${fmt(pl.tc,2)} s`
+    + (pl.vOk ? '' : ` · <span style="color:var(--red)">acima do máximo (${pl.vm} RPM em 1/${p.micro}) — aumente o tempo do copo</span>`)
+    + (pl.accOk ? '' : ` · <span style="color:var(--red)">rampa acima da aceleração máx. (${fmtInt(p.amax)} RPM/s) — rampas mais longas</span>`);
 }
-[['cupTa','ta',0.05,5],['cupV','v',5,999],['cupTd','td',0.05,5]].forEach(([id,k,lo,hi])=>$(id).addEventListener('change',()=>{
+(function(){ // arrastar as bolinhas do gráfico do copo (só no eixo do tempo)
+  const el=$('cupChart');
+  const xy=e=>{ const r=el.getBoundingClientRect(); return {x:(e.clientX-r.left)*CUPG.W/r.width, y:(e.clientY-r.top)*CUPG.H/r.height}; };
+  el.addEventListener('pointerdown',e=>{ if(!online()||!CUPG.h) return; const {x,y}=xy(e); let bi=-1,bd=1e9;
+    CUPG.h.forEach(([hx,hy],i)=>{ const d=Math.hypot(hx-x,hy-y); if(d<bd){bd=d;bi=i;} });
+    if(bd<28){ cupDrag=bi; el.setPointerCapture(e.pointerId); drawCup(); } });
+  el.addEventListener('pointermove',e=>{ if(cupDrag<0) return; const c=cupOf(), t=+clamp(CUPG.tOf(xy(e).x),0,CUPG.TV).toFixed(3);
+    if(cupDrag===0) c.ta=+clamp(t,0.05,Math.min(5,c.T-c.td)).toFixed(3);
+    else if(cupDrag===1) c.td=+clamp(c.T-t,0.05,Math.min(5,c.T-c.ta)).toFixed(3);
+    else c.T=+clamp(t,Math.max(0.2,c.ta+c.td),60).toFixed(3);
+    drawCup(); });
+  const end=()=>{ if(cupDrag<0) return; cupDrag=-1; save(); drawCup(); try{ updMq(); }catch(e){} };
+  el.addEventListener('pointerup',end); el.addEventListener('pointercancel',end); el.addEventListener('contextmenu',e=>e.preventDefault());
+  el.style.touchAction='none';
+})();
+[['cupTa','ta',0.05,5],['cupT','T',0.2,60],['cupTd','td',0.05,5]].forEach(([id,k,lo,hi])=>$(id).addEventListener('change',()=>{
   const p=P(), c=cupOf(p); let v=parseFloat($(id).value); if(isNaN(v)){ drawCup(); return; }
-  if(k==='v') hi=vmax(p); c[k]=+clamp(v,lo,hi).toFixed(k==='v'?1:3); save(); drawCup(); try{ updMq(); }catch(e){}
+  c[k]=+clamp(v,lo,hi).toFixed(3);
+  if(c.T<c.ta+c.td){ if(k==='T'){ toast('O tempo do copo precisa caber as duas rampas'); c.T=+(c.ta+c.td).toFixed(3); } else c.T=+(c.ta+c.td).toFixed(3); }
+  save(); drawCup(); try{ updMq(); }catch(e){}
 }));
 
 let tiEdited=false;
